@@ -2,8 +2,9 @@
  * native-dawn: fill a NativeDawnWindow from an SDL2 window.
  *
  * Header-only and optional; include it only when the program already uses
- * SDL2. On macOS, create the window with SDL_WINDOW_METAL. Call
- * nativeDawnSDL2Release after releasing the surface.
+ * SDL2 (X11, Wayland, Windows, macOS, Android). On macOS, create the window
+ * with SDL_WINDOW_METAL. Call nativeDawnSDL2Release after releasing the
+ * surface.
  */
 #ifndef NATIVE_DAWN_SDL2_H_
 #define NATIVE_DAWN_SDL2_H_
@@ -50,6 +51,12 @@ static inline int nativeDawnSDL2Window(SDL_Window* sdlWindow, NativeDawnSDL2Wind
             out->window.kind = NATIVE_DAWN_WINDOW_WIN32;
             out->window.display = info.info.win.hinstance;
             out->window.handle = info.info.win.window;
+            return 0;
+#endif
+#if defined(SDL_VIDEO_DRIVER_ANDROID)
+        case SDL_SYSWM_ANDROID:
+            out->window.kind = NATIVE_DAWN_WINDOW_ANDROID;
+            out->window.handle = info.info.android.window;
             return 0;
 #endif
 #if defined(SDL_VIDEO_DRIVER_COCOA) || defined(SDL_VIDEO_DRIVER_UIKIT)

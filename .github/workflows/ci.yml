@@ -55,7 +55,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libx11-xcb-dev libxcb1-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libwayland-dev libvulkan1 mesa-vulkan-drivers xvfb libsdl2-dev
+          sudo apt-get install -y libx11-dev libx11-xcb-dev libxcb1-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libwayland-dev libvulkan1 mesa-vulkan-drivers libegl1 libgles2 libegl-mesa0 xvfb libsdl2-dev
       - name: macOS packages
         if: runner.os == 'macOS'
         run: brew install sdl2
@@ -103,6 +103,15 @@ jobs:
         env:
           NATIVE_DAWN_TEST_SDL2: '1'
           SDL_VIDEODRIVER: x11
+      # The backend for GPUs without Vulkan, on Mesa's software OpenGL ES 3.2.
+      - name: C tests on OpenGL ES (compatibility mode)
+        if: runner.os == 'Linux'
+        run: npm run test:c
+        env:
+          NATIVE_DAWN_TEST_BACKEND: opengles
+          NATIVE_DAWN_TEST_COMPAT: '1'
+          EGL_PLATFORM: surfaceless
+          LIBGL_ALWAYS_SOFTWARE: '1'
       - name: Node window test (Xvfb)
         if: matrix.sdl && runner.os == 'Linux'
         run: xvfb-run -a npm run test:window
@@ -127,10 +136,74 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
 
+  android:
+    name: ${{ matrix.target }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [android-arm64, android-x64]
+    runs-on: ubuntu-22.04
+    env:
+      NATIVE_DAWN_TARGET: ${{ matrix.target }}
+      NATIVE_DAWN_BUILD_JOBS: '4'
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: CMake and Ninja
+        run: python -m pip install cmake==4.2.3 ninja==1.13.0
+      - name: Newest preinstalled NDK
+        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+      - name: Compiler cache
+        id: sccache
+        continue-on-error: true
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Use the compiler cache
+        if: steps.sccache.outcome == 'success'
+        run: sccache --version && echo "NATIVE_DAWN_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV"
+      - name: npm dependencies
+        run: npm ci --ignore-scripts
+      - name: Cache Dawn sources
+        uses: actions/cache@v4
+        with:
+          path: .cache/dawn
+          key: dawn-src-${{ matrix.target }}-${{ hashFiles('upstream.json', 'scripts/fetch-dependencies.py') }}
+      - name: Build
+        run: npm run build
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # x86_64 image; arm64 code runs on it through Android's ARM translation.
+      - name: C tests on an Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect
+          script: npm run test:android
+      - name: Package
+        run: npm run package:binary
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: artifacts/*
+          if-no-files-found: error
+
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, android]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -143,7 +216,7 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-      - name: Check the tag and all six archives
+      - name: Check the tag and all eight archives
         run: node scripts/check-release.mjs
       - name: Create the GitHub release
         env:

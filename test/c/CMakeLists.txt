@@ -10,6 +10,11 @@ get_filename_component(NATIVE_DAWN_PREFIX "${Dawn_DIR}/../../.." ABSOLUTE)
 
 add_executable(compute compute.c)
 target_link_libraries(compute PRIVATE dawn::webgpu_dawn)
+if(ANDROID)
+  # The NDK toolchain skips rpaths; the test runs from a directory holding
+  # libwebgpu_dawn.so, and ARM translation ignores LD_LIBRARY_PATH.
+  target_link_options(compute PRIVATE "LINKER:-rpath,$ORIGIN")
+endif()
 
 option(NATIVE_DAWN_TEST_SDL2 "Build the SDL2 window test" OFF)
 if(NATIVE_DAWN_TEST_SDL2)

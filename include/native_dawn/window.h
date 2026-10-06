@@ -20,7 +20,8 @@ typedef enum NativeDawnWindowKind {
     NATIVE_DAWN_WINDOW_XLIB = 1,        /* display: Display*, xid: Window */
     NATIVE_DAWN_WINDOW_WAYLAND = 2,     /* display: wl_display*, handle: wl_surface* */
     NATIVE_DAWN_WINDOW_WIN32 = 3,       /* display: HINSTANCE, handle: HWND */
-    NATIVE_DAWN_WINDOW_METAL_LAYER = 4  /* handle: CAMetalLayer* */
+    NATIVE_DAWN_WINDOW_METAL_LAYER = 4, /* handle: CAMetalLayer* */
+    NATIVE_DAWN_WINDOW_ANDROID = 5      /* handle: ANativeWindow* */
 } NativeDawnWindowKind;
 
 typedef struct NativeDawnWindow {
@@ -42,6 +43,8 @@ static inline const char* nativeDawnWindowError(const NativeDawnWindow* window) 
             return window->handle ? NULL : "Win32 window needs handle (HWND)";
         case NATIVE_DAWN_WINDOW_METAL_LAYER:
             return window->handle ? NULL : "Metal window needs handle (CAMetalLayer)";
+        case NATIVE_DAWN_WINDOW_ANDROID:
+            return window->handle ? NULL : "Android window needs handle (ANativeWindow)";
     }
     return "unknown window kind";
 }
@@ -79,6 +82,12 @@ static inline WGPUSurface nativeDawnCreateSurface(WGPUInstance instance, const N
         case NATIVE_DAWN_WINDOW_METAL_LAYER: {
             WGPUSurfaceSourceMetalLayer source = WGPU_SURFACE_SOURCE_METAL_LAYER_INIT;
             source.layer = window->handle;
+            descriptor.nextInChain = &source.chain;
+            return wgpuInstanceCreateSurface(instance, &descriptor);
+        }
+        case NATIVE_DAWN_WINDOW_ANDROID: {
+            WGPUSurfaceSourceAndroidNativeWindow source = WGPU_SURFACE_SOURCE_ANDROID_NATIVE_WINDOW_INIT;
+            source.window = window->handle;
             descriptor.nextInChain = &source.chain;
             return wgpuInstanceCreateSurface(instance, &descriptor);
         }

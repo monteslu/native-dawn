@@ -4,13 +4,13 @@ import os from 'node:os'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { x as extract } from 'tar'
-import { root, target, pkg, assetName, distDir, binDir, assertTarget, manifestMatches, run } from './common.mjs'
+import { root, target, pkg, assetName, distDir, binDir, nodeTargets, hasAddon, manifestMatches, run } from './common.mjs'
 
 const addon = dir => path.join(dir, binDir, 'dawn.node')
 
 export async function install() {
-  assertTarget()
   if (process.env.NATIVE_DAWN_SKIP_INSTALL === '1') return
+  if (!hasAddon) throw new Error(`No Node build for ${target}; supported: ${nodeTargets.join(', ')}. Android SDK archives are on the GitHub releases.`)
   if (process.env.NATIVE_DAWN_BUILD_FROM_SOURCE === '1') {
     run(process.execPath, [path.join(root, 'scripts/build.mjs')])
     return

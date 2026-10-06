@@ -51,7 +51,9 @@ static void waitFor(WGPUInstance instance, Pending* pending) {
 }
 
 /* Options come from the environment so CI can pick a backend:
- * NATIVE_DAWN_TEST_BACKEND=vulkan|metal|d3d12, NATIVE_DAWN_TEST_FALLBACK=1. */
+ * NATIVE_DAWN_TEST_BACKEND=vulkan|metal|d3d12|opengles,
+ * NATIVE_DAWN_TEST_FALLBACK=1, and NATIVE_DAWN_TEST_COMPAT=1 for the
+ * compatibility feature level (required for OpenGL ES). */
 static Gpu gpuCreate(void) {
     Gpu gpu = {0};
     gpu.instance = wgpuCreateInstance(NULL);
@@ -62,6 +64,9 @@ static Gpu gpuCreate(void) {
     if (backend && strcmp(backend, "vulkan") == 0) options.backendType = WGPUBackendType_Vulkan;
     if (backend && strcmp(backend, "metal") == 0) options.backendType = WGPUBackendType_Metal;
     if (backend && strcmp(backend, "d3d12") == 0) options.backendType = WGPUBackendType_D3D12;
+    if (backend && strcmp(backend, "opengles") == 0) options.backendType = WGPUBackendType_OpenGLES;
+    const char* compat = getenv("NATIVE_DAWN_TEST_COMPAT");
+    if (compat && strcmp(compat, "1") == 0) options.featureLevel = WGPUFeatureLevel_Compatibility;
     const char* fallback = getenv("NATIVE_DAWN_TEST_FALLBACK");
     options.forceFallbackAdapter = fallback && strcmp(fallback, "1") == 0;
 

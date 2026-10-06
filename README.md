@@ -22,8 +22,9 @@ Installation downloads the archive for your platform from this repository's GitH
 | Linux (glibc; release builds run on Ubuntu 22.04 and newer) | x64, arm64 | Vulkan |
 | macOS 11+ | x64, arm64 | Metal |
 | Windows | x64, arm64 | D3D12 |
+| Android 8.0+ (API 26), C SDK only | arm64, x64 | Vulkan, OpenGL ES |
 
-Linux builds also include Dawn's OpenGL and OpenGL ES backends, and both X11 and Wayland window support. Node.js 22 or newer.
+Linux builds support X11 and Wayland windows and also include the OpenGL ES backend (see [OpenGL ES](#opengl-es-compatibility-mode)). The Node addon needs Node.js 22 or newer.
 
 ## Using it from Node
 
@@ -145,6 +146,45 @@ nativeDawnSDL2Release(&native);
 
 [test/c/sdl2_window.c](test/c/sdl2_window.c) configures a surface, presents frames and handles a resize.
 
+### OpenGL ES (compatibility mode)
+
+GPUs without a Vulkan driver, such as the Mali-G31 in many Allwinner H700 handhelds, can still run WebGPU through Dawn's OpenGL ES backend. It needs OpenGL ES 3.1 or newer; ES 3.0 lacks the compute shaders and storage buffers that WebGPU requires. WGSL vertex, fragment and compute shaders are all translated to GLSL ES.
+
+This backend implements WebGPU's compatibility mode, a reduced feature level for OpenGL ES 3.1 and Direct3D 11 class hardware. Ask for it explicitly:
+
+```c
+WGPURequestAdapterOptions options = WGPU_REQUEST_ADAPTER_OPTIONS_INIT;
+options.featureLevel = WGPUFeatureLevel_Compatibility;
+options.backendType = WGPUBackendType_OpenGLES;  // optional: prefer it over Vulkan
+```
+
+```js
+const adapter = await gpu.requestAdapter({ featureLevel: 'compatibility' })
+```
+
+Code written for compatibility mode also runs on full WebGPU. On Linux the backend reaches the driver through EGL; without an X11 or Wayland session, set `EGL_PLATFORM=surfaceless`. Presenting needs an X11, Wayland or Android window: Dawn has no surface type for direct KMS/DRM output, so on such systems this mode is limited to compute and offscreen rendering.
+
+## Android
+
+Android archives (`android-arm64`, `android-x64`) hold the C SDK: `libwebgpu_dawn.so`, headers, the CMake package and `dawn.json`. There is no Node addon for Android, and npm installs don't fetch these; download them from the GitHub release. The library uses the static C++ runtime, needs only system libraries, and is aligned for 16 KB pages.
+
+With the NDK and CMake:
+
+```sh
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+  -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 \
+  -DDawn_DIR=/path/to/native-dawn-android-arm64/lib/cmake/Dawn
+```
+
+Package `lib/libwebgpu_dawn.so` with your app's other native libraries (`jniLibs/arm64-v8a/`, or `IMPORTED_LOCATION` in an Android Gradle CMake build). For a window, pass the `ANativeWindow*` from your `Surface`:
+
+```c
+NativeDawnWindow window = { NATIVE_DAWN_WINDOW_ANDROID, NULL, aNativeWindow, 0 };
+WGPUSurface surface = nativeDawnCreateSurface(instance, &window);
+```
+
+or use `native_dawn/sdl2.h` with an SDL2 Android app. Vulkan is used where the device has it; OpenGL ES 3.1+ is available through compatibility mode. Kotlin and Java apps are better served by Google's `androidx.webgpu` library, which is built from Dawn too.
+
 ### Bindings for other runtimes
 
 `share/native-dawn/dawn.json` is the file Dawn generates its own headers and wrappers from: every object, method, struct, enum and callback in the API. A binding for another JavaScript engine or language can be generated from it rather than written by hand. `npx native-dawn dawn-json` prints its path.
@@ -167,12 +207,21 @@ npm ci --ignore-scripts
 npm run build
 ```
 
-The build fetches the Dawn revision pinned in `upstream.json` and the dependencies Dawn pins for it (no depot_tools), builds `webgpu_dawn` and the addon, and installs the result to `dist/<platform>-<arch>`. Sources go in `.cache/dawn`, build files in `build/`. A first build takes a while; Dawn is large.
+The build fetches the Dawn revision pinned in `upstream.json` and the dependencies Dawn pins for it (no depot_tools), builds `webgpu_dawn` and the addon, and installs the result to `dist/<platform>-<arch>`. Sources go in `.cache/dawn`, build files in `build/<platform>-<arch>`. A first build takes a while; Dawn is large.
+
+Android builds cross-compile from Linux, macOS or Windows with the NDK (r27 or newer) and need no Go:
+
+```sh
+NATIVE_DAWN_TARGET=android-arm64 npm run build   # or android-x64
+```
+
+The NDK is found through `ANDROID_NDK_HOME`, `ANDROID_NDK_ROOT`, or the newest one under `$ANDROID_HOME/ndk`.
 
 Environment variables:
 
 | Variable | Effect |
 | --- | --- |
+| `NATIVE_DAWN_TARGET` | `android-arm64` or `android-x64` to cross-compile; default is this machine |
 | `NATIVE_DAWN_BUILD_JOBS` | Parallel compile jobs (default: up to 8) |
 | `NATIVE_DAWN_COMPILER_LAUNCHER` | Compiler launcher such as `sccache` or `ccache` |
 | `NATIVE_DAWN_BUILD_FROM_SOURCE=1` | Make `npm install` build instead of downloading |
@@ -188,15 +237,16 @@ npm run test:c                    # C programs built against dist/ with find_pac
 NATIVE_DAWN_TEST_SDL2=1 npm run test:c    # plus the SDL2 window test
 npm run test:window               # Node + @kmamal/sdl window (needs a display)
 npm run test:package              # pack, install into a scratch project, run from Node and C
+NATIVE_DAWN_TARGET=android-arm64 npm run test:android   # C test on the device or emulator adb sees
 ```
 
-Tests need a working adapter, hardware or software (Mesa's lavapipe on Linux, WARP on Windows), and fail without one rather than skipping. `NATIVE_DAWN_TEST_BACKEND=vulkan|metal|d3d12` picks a backend and `NATIVE_DAWN_TEST_FALLBACK=1` asks for a fallback adapter. On headless Linux, run the window tests under `xvfb-run -a` with `SDL_VIDEODRIVER=x11`.
+Tests need a working adapter, hardware or software (Mesa's lavapipe on Linux, WARP on Windows), and fail without one rather than skipping. `NATIVE_DAWN_TEST_BACKEND=vulkan|metal|d3d12|opengles` picks a backend, `NATIVE_DAWN_TEST_COMPAT=1` requests compatibility mode (required for `opengles`), and `NATIVE_DAWN_TEST_FALLBACK=1` asks for a fallback adapter. The Android emulator only offers OpenGL ES 3.0, so it tests Vulkan; on Linux, `EGL_PLATFORM=surfaceless NATIVE_DAWN_TEST_BACKEND=opengles NATIVE_DAWN_TEST_COMPAT=1 npm run test:c` tests OpenGL ES. On headless Linux, run the window tests under `xvfb-run -a` with `SDL_VIDEODRIVER=x11`.
 
 ## CI and releases
 
-[CI](.github/workflows/ci.yml) builds all six targets on native runners and runs every suite above on each one, on Node 22 and 24, against the runner's software adapter. The window tests run everywhere except Windows ARM64, which has no @kmamal/sdl build.
+[CI](.github/workflows/ci.yml) builds the six desktop targets on native runners and runs every suite above on each one, on Node 22 and 24, against the runner's software adapter. Linux also runs the C tests on OpenGL ES in compatibility mode. The window tests run everywhere except Windows ARM64, which has no @kmamal/sdl build. The two Android targets are cross-compiled on Linux and their C tests run on an x86_64 Android emulator; arm64 code runs there through Android's ARM translation.
 
-Pushing a `v<version>` tag that matches `package.json` runs the same jobs, and if all six pass, creates a GitHub release with the six archives and their checksums. npm publishing is a separate, manual step after that, since `npm install` downloads from the release.
+Pushing a `v<version>` tag that matches `package.json` runs the same jobs, and if all eight pass, creates a GitHub release with the eight archives and their checksums. npm publishing is a separate, manual step after that, since `npm install` downloads from the release.
 
 ## License
 
