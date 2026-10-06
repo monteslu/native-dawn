@@ -31,3 +31,17 @@ export function assertTarget() {
 export function manifestMatches(manifest) {
   return manifest.version === pkg.version && manifest.target === target && manifest.dawn === upstream.dawn.revision
 }
+
+// Applies one source hook: inserts replacement for a needle that must occur
+// exactly once. Returns the new text, the same text if already applied, or
+// null if the needle is missing or ambiguous. Dawn is checked out with CRLF on
+// Windows (core.autocrlf), so multi-line hooks follow the file's line endings.
+export function insertText(text, needle, replacement) {
+  if (text.includes('\r\n')) {
+    needle = needle.replaceAll('\n', '\r\n')
+    replacement = replacement.replaceAll('\n', '\r\n')
+  }
+  if (text.includes(replacement)) return text
+  if (text.split(needle).length !== 2) return null
+  return text.replace(needle, () => replacement)
+}

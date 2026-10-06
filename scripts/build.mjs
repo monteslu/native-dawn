@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { spawnSync } from 'node:child_process'
-import { root, run, upstream, target, targets, pkg, distDir, binDir, assertTarget, isAndroid, hasAddon } from './common.mjs'
+import { root, run, upstream, target, targets, pkg, distDir, binDir, assertTarget, isAndroid, hasAddon, insertText } from './common.mjs'
 
 assertTarget()
 const dawn = path.join(root, '.cache/dawn')
@@ -37,10 +37,11 @@ run(process.platform === 'win32' ? 'python' : 'python3', [path.join(root, 'scrip
 function insert(relative, needle, replacement) {
   const file = path.join(dawn, relative)
   const text = fs.readFileSync(file, 'utf8')
-  if (text.includes(replacement)) return
-  if (text.split(needle).length !== 2) throw new Error(`Dawn changed around a native-dawn hook in ${relative}; update scripts/build.mjs`)
-  fs.writeFileSync(file, text.replace(needle, replacement))
+  const patched = insertText(text, needle, replacement)
+  if (patched === null) throw new Error(`Dawn changed around a native-dawn hook in ${relative}; update scripts/build.mjs`)
+  if (patched !== text) fs.writeFileSync(file, patched)
 }
+
 insert('src/dawn/node/Module.cpp', '#include "dawn/dawn_proc.h"', '#include "dawn/dawn_proc.h"\n#include "extensions.h"')
 // The addon calls webgpu_dawn's exported functions directly, so Dawn's proc
 // table (and the dawn_proc library behind it) is not used.
