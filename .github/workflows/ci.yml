@@ -128,6 +128,9 @@ jobs:
           NATIVE_DAWN_TEST_COMPAT: '1'
           EGL_PLATFORM: surfaceless
           LIBGL_ALWAYS_SOFTWARE: '1'
+          # Mesa 26.0.x crashes linking a program it loads from its own disk
+          # cache (see README); keep each run independent of earlier ones.
+          MESA_SHADER_CACHE_DISABLE: 'true'
       - name: Node window test (Xvfb)
         if: matrix.sdl && runner.os == 'Linux'
         run: xvfb-run -a npm run test:window

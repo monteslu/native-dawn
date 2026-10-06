@@ -162,7 +162,9 @@ options.backendType = WGPUBackendType_OpenGLES;  // optional: prefer it over Vul
 const adapter = await gpu.requestAdapter({ featureLevel: 'compatibility' })
 ```
 
-Code written for compatibility mode also runs on full WebGPU. On Linux the backend reaches the driver through EGL; without an X11 or Wayland session, set `EGL_PLATFORM=surfaceless`. Presenting needs an X11, Wayland or Android window: Dawn has no surface type for direct KMS/DRM output, so on such systems this mode is limited to compute and offscreen rendering.
+Code written for compatibility mode also runs on full WebGPU. On Linux the backend reaches the driver through EGL; without an X11 or Wayland session, set `EGL_PLATFORM=surfaceless`.
+
+Known driver bug: with Mesa 26.0.x (seen on 26.0.8, radeonsi and llvmpipe), creating a render pipeline on this backend crashes inside Mesa whenever the GL program comes from Mesa's on-disk shader cache, so the first run works and later runs segfault. Set `MESA_SHADER_CACHE_DISABLE=true` until Mesa is fixed. The Vulkan backend is not affected. Presenting needs an X11, Wayland or Android window: Dawn has no surface type for direct KMS/DRM output, so on such systems this mode is limited to compute and offscreen rendering.
 
 ## Android
 

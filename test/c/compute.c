@@ -1,5 +1,6 @@
-/* Headless: a WGSL compute shader doubles an array, then an offscreen render
- * pass clears a texture; both are read back and checked. */
+/* Headless: a WGSL compute shader doubles an array, an offscreen render pass
+ * clears a texture, and a vertex+fragment pipeline draws a triangle; all are
+ * read back and checked. */
 #include "gpu.h"
 
 static void testCompute(Gpu* gpu) {
@@ -122,10 +123,96 @@ static void testRender(Gpu* gpu) {
     wgpuTextureRelease(texture);
 }
 
+/* A real vertex+fragment program: clearing alone never links one, and some
+ * drivers only fail when they do. */
+static void testTriangle(Gpu* gpu) {
+    WGPUTextureDescriptor textureDescriptor = WGPU_TEXTURE_DESCRIPTOR_INIT;
+    textureDescriptor.size.width = 64;
+    textureDescriptor.size.height = 64;
+    textureDescriptor.format = WGPUTextureFormat_RGBA8Unorm;
+    textureDescriptor.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
+    WGPUTexture texture = wgpuDeviceCreateTexture(gpu->device, &textureDescriptor);
+    WGPUTextureView view = wgpuTextureCreateView(texture, NULL);
+
+    WGPUShaderSourceWGSL wgsl = WGPU_SHADER_SOURCE_WGSL_INIT;
+    wgsl.code = sv(
+        "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+        "  let p = array<vec2f, 3>(vec2f(-1, -1), vec2f(1, -1), vec2f(0, 1));\n"
+        "  return vec4f(p[i], 0, 1);\n"
+        "}\n"
+        "@fragment fn fs() -> @location(0) vec4f { return vec4f(0, 0, 1, 1); }\n");
+    WGPUShaderModuleDescriptor moduleDescriptor = WGPU_SHADER_MODULE_DESCRIPTOR_INIT;
+    moduleDescriptor.nextInChain = &wgsl.chain;
+    WGPUShaderModule module = wgpuDeviceCreateShaderModule(gpu->device, &moduleDescriptor);
+
+    WGPUColorTargetState target = WGPU_COLOR_TARGET_STATE_INIT;
+    target.format = WGPUTextureFormat_RGBA8Unorm;
+    WGPUFragmentState fragment = WGPU_FRAGMENT_STATE_INIT;
+    fragment.module = module;
+    fragment.entryPoint = sv("fs");
+    fragment.targetCount = 1;
+    fragment.targets = &target;
+    WGPURenderPipelineDescriptor pipelineDescriptor = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
+    pipelineDescriptor.vertex.module = module;
+    pipelineDescriptor.vertex.entryPoint = sv("vs");
+    pipelineDescriptor.fragment = &fragment;
+    WGPURenderPipeline pipeline = wgpuDeviceCreateRenderPipeline(gpu->device, &pipelineDescriptor);
+
+    const size_t bytesPerRow = 256, size = bytesPerRow * 64;
+    WGPUBufferDescriptor readbackDescriptor = WGPU_BUFFER_DESCRIPTOR_INIT;
+    readbackDescriptor.size = size;
+    readbackDescriptor.usage = WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst;
+    WGPUBuffer readback = wgpuDeviceCreateBuffer(gpu->device, &readbackDescriptor);
+
+    WGPURenderPassColorAttachment color = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
+    color.view = view;
+    color.loadOp = WGPULoadOp_Clear;
+    color.storeOp = WGPUStoreOp_Store;
+    color.clearValue = (WGPUColor){0.0, 0.0, 0.0, 1.0};
+    WGPURenderPassDescriptor passDescriptor = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+    passDescriptor.colorAttachmentCount = 1;
+    passDescriptor.colorAttachments = &color;
+
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(gpu->device, NULL);
+    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDescriptor);
+    wgpuRenderPassEncoderSetPipeline(pass, pipeline);
+    wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+    wgpuRenderPassEncoderEnd(pass);
+    WGPUTexelCopyTextureInfo source = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
+    source.texture = texture;
+    WGPUTexelCopyBufferInfo destination = WGPU_TEXEL_COPY_BUFFER_INFO_INIT;
+    destination.buffer = readback;
+    destination.layout.bytesPerRow = bytesPerRow;
+    destination.layout.rowsPerImage = 64;
+    WGPUExtent3D extent = {64, 64, 1};
+    wgpuCommandEncoderCopyTextureToBuffer(encoder, &source, &destination, &extent);
+    WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, NULL);
+    wgpuQueueSubmit(gpu->queue, 1, &commands);
+
+    const uint8_t* pixels = (const uint8_t*)mapRead(gpu, readback, size);
+    const uint8_t* center = pixels + 32 * bytesPerRow + 32 * 4;
+    const uint8_t* corner = pixels;
+    CHECK(center[0] == 0 && center[1] == 0 && center[2] == 255 && center[3] == 255,
+          "triangle center is %u,%u,%u,%u", center[0], center[1], center[2], center[3]);
+    CHECK(corner[2] == 0 && corner[3] == 255, "top-left corner is %u,%u,%u,%u", corner[0], corner[1], corner[2], corner[3]);
+    wgpuBufferUnmap(readback);
+    printf("triangle: vertex+fragment pipeline drew blue at the center\n");
+
+    wgpuCommandBufferRelease(commands);
+    wgpuRenderPassEncoderRelease(pass);
+    wgpuCommandEncoderRelease(encoder);
+    wgpuBufferRelease(readback);
+    wgpuRenderPipelineRelease(pipeline);
+    wgpuShaderModuleRelease(module);
+    wgpuTextureViewRelease(view);
+    wgpuTextureRelease(texture);
+}
+
 int main(void) {
     Gpu gpu = gpuCreate();
     testCompute(&gpu);
     testRender(&gpu);
+    testTriangle(&gpu);
     gpuRelease(&gpu);
     printf("C compute test passed\n");
     return 0;
