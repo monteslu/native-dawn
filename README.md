@@ -40,7 +40,7 @@ const buffer = device.createBuffer({ size: 16, usage: globals.GPUBufferUsage.COP
 
 `gpu`, `adapter` and `device` are standard WebGPU objects. `globals` holds the WebGPU classes and constants (`GPUBufferUsage`, `GPUDevice`, `GPUValidationError`, ...). Nothing is installed on `globalThis` or `navigator`; webgpu-node does that, along with a canvas and `GPUCanvasContext`.
 
-Keep the `gpu` object alive while you use anything made from it, and call `device.destroy()` when you are done. Pending GPU work keeps Node running.
+Adapters and devices stay valid even if the `gpu` object is garbage collected. Call `device.destroy()` when you are done to release GPU memory promptly. Only pending asynchronous work (a `mapAsync`, `onSubmittedWorkDone`, pipeline creation and the like) keeps Node running; an idle device does not, and it costs no CPU. Dawn notices a lost device (a driver reset, for example) on the next WebGPU call or asynchronous operation, and `device.lost` settles then.
 
 ### Presenting to a window
 

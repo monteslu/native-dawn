@@ -1,6 +1,6 @@
 // One lifetime case per process, run by lifetime.test.mjs, which also checks
 // how the process ends. Prints "CASE-OK" when the case's own checks hold.
-import { create } from '../index.js'
+import addon, { create } from '../index.js'
 import { flags, adapterOptions, pixels, clear, GPUTextureUsage } from './helpers.mjs'
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
@@ -49,6 +49,18 @@ const cases = {
     dev.destroy()
     await sleep(200)
     if (info?.reason !== 'destroyed') throw new Error(`device.lost was not settled as destroyed: ${info?.reason}`)
+  },
+  // A device lost the way a driver reset loses it, with nothing else pending:
+  // only timers run, so nothing the app does drives a poll.
+  async lostWhileIdle() {
+    const dev = await device(create(flags()))
+    let info
+    dev.lost.then(value => { info = value })
+    await sleep(100)
+    addon._forceDeviceLoss(dev)
+    const deadline = Date.now() + 5000
+    while (!info && Date.now() < deadline) await sleep(100)
+    if (info?.reason !== 'unknown') throw new Error(`device.lost was not settled after a real loss: ${info?.reason}`)
   },
 }
 

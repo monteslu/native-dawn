@@ -263,11 +263,23 @@ Napi::Value DeviceHandle(const Napi::CallbackInfo& info) {
     return Napi::BigInt::New(env, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(device.Get())));
 }
 
+// Test hook: loses the device as a driver reset would, so tests can check how
+// device.lost is delivered. Not part of the public API.
+Napi::Value ForceDeviceLoss(const Napi::CallbackInfo& info) {
+    const auto env = info.Env();
+    if (!info[0].IsObject()) FAIL_VALUE(env, "Expected a GPUDevice from native-dawn", env.Undefined());
+    auto* binding = wgpu::interop::GPUDevice::Unwrap(info[0].As<Napi::Object>());
+    if (!binding) FAIL_VALUE(env, "Expected a GPUDevice from native-dawn", env.Undefined());
+    static_cast<wgpu::binding::GPUDevice*>(binding)->ForceLoss(wgpu::DeviceLostReason::Unknown, "forced by native-dawn test hook");
+    return env.Undefined();
+}
+
 }  // namespace
 
 void Initialize(Napi::Env env, Napi::Object exports) {
     Surface::Init(env, exports);
     exports.Set("deviceHandle", Napi::Function::New(env, DeviceHandle, "deviceHandle"));
+    exports.Set("_forceDeviceLoss", Napi::Function::New(env, ForceDeviceLoss, "_forceDeviceLoss"));
 }
 
 }  // namespace native_dawn
