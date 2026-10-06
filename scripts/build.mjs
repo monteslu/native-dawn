@@ -74,7 +74,10 @@ if (process.env.NATIVE_DAWN_COMPILER_LAUNCHER) {
 }
 run('cmake', args, { env })
 const jobs = process.env.NATIVE_DAWN_BUILD_JOBS || String(Math.min(8, os.availableParallelism()))
-run('cmake', ['--build', build, '--config', 'Release', '--target', 'webgpu_dawn', ...(hasAddon ? ['dawn_node'] : []), '--parallel', jobs], { env })
+// Dawn loads dxcompiler.dll and dxil.dll at runtime; upstream only builds them
+// as dependencies of the static dawn_native, so ask for them by name.
+const buildTargets = ['webgpu_dawn', ...(hasAddon ? ['dawn_node'] : []), ...(target.startsWith('win32-') ? ['dxcompiler', 'copy_dxil_dll'] : [])]
+run('cmake', ['--build', build, '--config', 'Release', '--target', ...buildTargets, '--parallel', jobs], { env })
 
 fs.rmSync(distDir, { recursive: true, force: true })
 run('cmake', ['--install', build, '--config', 'Release', '--prefix', distDir], { env })
