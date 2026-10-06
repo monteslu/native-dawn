@@ -47,6 +47,29 @@ insert('src/dawn/node/Module.cpp', '#include "dawn/dawn_proc.h"', '#include "daw
 insert('src/dawn/node/Module.cpp', '    dawnProcSetProcs(&dawn::native::GetProcs());', '    // native-dawn: wgpu* calls go straight to the shared webgpu_dawn library.')
 insert('src/dawn/node/Module.cpp', '    return exports;', '    native_dawn::Initialize(env, exports);\n    return exports;')
 insert('src/dawn/node/binding/GPUDevice.h', '    ~GPUDevice() override;', '    ~GPUDevice() override;\n    wgpu::Device GetNativeDawnDevice() const { return device_; }')
+// Lifetime fixes for Dawn's Node bindings.
+//
+// The polling runner shares the instance with GPU. Upstream it holds a raw
+// pointer, while adapters, devices, buffers and queues keep the runner alive,
+// so once the JavaScript GPU object is collected the next poll reads a freed
+// instance and the process dies.
+insert('src/dawn/node/binding/AsyncRunner.h', '    static std::shared_ptr<AsyncRunner> Create(dawn::native::Instance* instance);', '    static std::shared_ptr<AsyncRunner> Create(std::shared_ptr<dawn::native::Instance> instance);')
+insert('src/dawn/node/binding/AsyncRunner.h', '    explicit AsyncRunner(dawn::native::Instance* instance);', '    explicit AsyncRunner(std::shared_ptr<dawn::native::Instance> instance);')
+insert('src/dawn/node/binding/AsyncRunner.h', '    const dawn::native::Instance* const instance_;', '    // native-dawn: shared with GPU, so a poll never outlives the instance.\n    const std::shared_ptr<dawn::native::Instance> instance_;')
+insert('src/dawn/node/binding/AsyncRunner.cpp', 'std::shared_ptr<AsyncRunner> AsyncRunner::Create(dawn::native::Instance* instance) {\n    auto runner = std::make_shared<AsyncRunner>(instance);', 'std::shared_ptr<AsyncRunner> AsyncRunner::Create(std::shared_ptr<dawn::native::Instance> instance) {\n    auto runner = std::make_shared<AsyncRunner>(std::move(instance));')
+insert('src/dawn/node/binding/AsyncRunner.cpp', 'AsyncRunner::AsyncRunner(dawn::native::Instance* instance) : instance_(instance) {}', 'AsyncRunner::AsyncRunner(std::shared_ptr<dawn::native::Instance> instance)\n    : instance_(std::move(instance)) {}')
+insert('src/dawn/node/binding/GPU.h', '    std::unique_ptr<dawn::native::Instance> instance_;', '    std::shared_ptr<dawn::native::Instance> instance_;')
+insert('src/dawn/node/binding/GPU.cpp', '    instance_ = std::make_unique<dawn::native::Instance>(', '    instance_ = std::make_shared<dawn::native::Instance>(')
+insert('src/dawn/node/binding/GPU.cpp', '    async_ = AsyncRunner::Create(instance_.get());', '    async_ = AsyncRunner::Create(instance_);')
+// A live device is not pending work. Upstream counts the device.lost promise
+// as a pending task, so every device keeps setImmediate polling for as long
+// as it exists: a full CPU core while idle, and Node never exits on its own.
+insert('src/dawn/node/binding/AsyncRunner.h', '    inline ~AsyncContext() { runner_->End(); }', '    inline ~AsyncContext() {\n        if (!detached_) {\n            runner_->End();\n        }\n    }\n\n    // native-dawn: stop counting this context as pending work. For promises\n    // that may never settle (device.lost), so they do not keep the event\n    // loop polling for the life of the object.\n    inline void Detach() {\n        if (!detached_) {\n            detached_ = true;\n            runner_->End();\n        }\n    }')
+insert('src/dawn/node/binding/AsyncRunner.h', '    std::shared_ptr<AsyncRunner> runner_;\n};', '    std::shared_ptr<AsyncRunner> runner_;\n    bool detached_ = false;\n};')
+insert('src/dawn/node/binding/GPUAdapter.cpp', '    auto device_lost_ctx = new DeviceLostContext(env, PROMISE_INFO, async_);', '    auto device_lost_ctx = new DeviceLostContext(env, PROMISE_INFO, async_);\n    device_lost_ctx->Detach();')
+// With no standing poll, destroy() asks for one so the device-lost callback
+// queued by Dawn is delivered.
+insert('src/dawn/node/binding/GPUDevice.cpp', '"device was destroyed"));\n    }\n    device_.Destroy();\n    destroyed_ = true;', '"device was destroyed"));\n    }\n    device_.Destroy();\n    destroyed_ = true;\n    // native-dawn: deliver the queued device-lost callback.\n    async_->Begin(env);\n    async_->End();')
 
 const build = path.join(root, 'build', target)
 const args = ['-S', root, '-B', build, '-DCMAKE_BUILD_TYPE=Release', `-DNATIVE_DAWN_NODE=${hasAddon ? 'ON' : 'OFF'}`]
