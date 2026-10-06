@@ -1,0 +1,4 @@
+{
+  "dawn": { "url": "https://dawn.googlesource.com/dawn", "revision": "1e975e28f98a0285e44150a7f64b3bb89f27c719" },
+  "sdlSurfaceReference": { "url": "https://github.com/kmamal/gpu", "revision": "5bdbb0e02343944f0504db2066f9cb2462c7661e" }
+}

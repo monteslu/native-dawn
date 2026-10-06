@@ -1,0 +1,9 @@
+native-dawn builds Google's Dawn WebGPU implementation and its Node-API
+bindings. Dawn source: https://dawn.googlesource.com/dawn
+The exact revision is recorded in upstream.json. Binary archives include the
+Dawn license and the licenses of its bundled dependencies under
+share/native-dawn/licenses.
+
+The handling of @kmamal/sdl window handles follows Konstantin M's
+@kmamal/gpu (MIT): https://github.com/kmamal/gpu, at the revision recorded
+in upstream.json.

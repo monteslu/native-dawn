@@ -1,0 +1,76 @@
+{
+  "name": "native-dawn",
+  "version": "0.1.0",
+  "description": "Prebuilt Dawn WebGPU for Node.js and native code: shared library, C headers, and Node-API bindings",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
+    "./paths": {
+      "types": "./paths.d.ts",
+      "import": "./paths.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "native-dawn": "bin/native-dawn.js"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "paths.js",
+    "paths.d.ts",
+    "bin",
+    "include",
+    "src",
+    "scripts/*.mjs",
+    "scripts/*.py",
+    "CMakeLists.txt",
+    "upstream.json",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "install": "node scripts/install.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "node scripts/test.mjs",
+    "test:c": "node scripts/test-c.mjs",
+    "test:window": "node test/window.mjs",
+    "test:package": "node scripts/test-package.mjs",
+    "package:binary": "node scripts/package-binary.mjs",
+    "test:types": "tsc -p test/tsconfig.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/monteslu/native-dawn.git"
+  },
+  "author": "Luis Montes",
+  "license": "MIT",
+  "keywords": [
+    "webgpu",
+    "dawn",
+    "wgsl",
+    "gpu",
+    "native",
+    "vulkan",
+    "metal",
+    "d3d12"
+  ],
+  "dependencies": {
+    "@webgpu/types": "0.1.72",
+    "tar": "7.5.22"
+  },
+  "devDependencies": {
+    "@kmamal/sdl": "0.11.13",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  }
+}

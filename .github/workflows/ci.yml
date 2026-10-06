@@ -1,0 +1,152 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, target: linux-x64, backend: vulkan, sdl: true }
+          - { os: ubuntu-22.04-arm, target: linux-arm64, backend: vulkan, sdl: true }
+          - { os: macos-15-intel, target: darwin-x64, backend: metal, sdl: true }
+          - { os: macos-15, target: darwin-arm64, backend: metal, sdl: true }
+          - { os: windows-2022, target: win32-x64, backend: d3d12, sdl: true }
+          # @kmamal/sdl publishes no Windows ARM64 build, so no window test there.
+          - { os: windows-11-arm, target: win32-arm64, backend: d3d12, sdl: false }
+    runs-on: ${{ matrix.os }}
+    env:
+      NATIVE_DAWN_BUILD_JOBS: '4'
+      NATIVE_DAWN_TEST_BACKEND: ${{ matrix.backend }}
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+          cache: false
+      - name: Check runner architecture
+        shell: bash
+        run: node -e "if (process.platform + '-' + process.arch !== '${{ matrix.target }}') throw Error('Runner is ' + process.platform + '-' + process.arch)"
+
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libx11-xcb-dev libxcb1-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libwayland-dev libvulkan1 mesa-vulkan-drivers xvfb libsdl2-dev
+      - name: macOS packages
+        if: runner.os == 'macOS'
+        run: brew install sdl2
+      - name: MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.target == 'win32-arm64' && 'arm64' || 'x64' }}
+      - name: CMake and Ninja
+        run: python -m pip install cmake==4.2.3 ninja==1.13.0
+
+      - name: Compiler cache
+        id: sccache
+        continue-on-error: true
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Use the compiler cache
+        if: steps.sccache.outcome == 'success'
+        shell: bash
+        run: sccache --version && echo "NATIVE_DAWN_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV"
+
+      - name: npm dependencies
+        run: npm ci --ignore-scripts
+      - name: SDL for the window test
+        if: matrix.sdl
+        run: npm rebuild @kmamal/sdl
+
+      - name: Cache Dawn sources
+        uses: actions/cache@v4
+        with:
+          path: .cache/dawn
+          key: dawn-src-${{ matrix.target }}-${{ hashFiles('upstream.json', 'scripts/fetch-dependencies.py') }}
+      - name: Build
+        run: npm run build
+
+      - name: Node tests (Node 22)
+        run: npm test
+      - name: C tests against the install prefix
+        if: runner.os != 'Linux'
+        run: npm run test:c
+        env:
+          NATIVE_DAWN_TEST_SDL2: ${{ runner.os == 'macOS' && '1' || '0' }}
+      - name: C tests against the install prefix (Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:c
+        env:
+          NATIVE_DAWN_TEST_SDL2: '1'
+          SDL_VIDEODRIVER: x11
+      - name: Node window test (Xvfb)
+        if: matrix.sdl && runner.os == 'Linux'
+        run: xvfb-run -a npm run test:window
+        env:
+          SDL_VIDEODRIVER: x11
+      - name: Node window test
+        if: matrix.sdl && runner.os != 'Linux'
+        run: npm run test:window
+      - name: Packed npm package with the release archive, from Node and C
+        run: npm run test:package
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Node tests (Node 24, same binary)
+        run: npm test
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Check the tag and all six archives
+        run: node scripts/check-release.mjs
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --verify-tag --generate-notes
+      # npm publishing is manual and happens after this job succeeds.

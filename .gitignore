@@ -1,0 +1,10 @@
+node_modules/
+.cache/
+build/
+dist/
+artifacts/
+test/c/build/
+*.tgz
+*.log
+__pycache__/
+*.pyc
