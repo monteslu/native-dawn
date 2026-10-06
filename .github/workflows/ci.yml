@@ -29,9 +29,12 @@ jobs:
           - { os: windows-2022, target: win32-x64, backend: d3d12, sdl: true }
           # @kmamal/sdl publishes no Windows ARM64 build, so no window test there.
           - { os: windows-11-arm, target: win32-arm64, backend: d3d12, sdl: false }
+          # Cross-compiled C SDK; tested on an x86_64 emulator through ARM translation.
+          - { os: ubuntu-22.04, target: android-arm64, backend: '', sdl: false, android: true }
     runs-on: ${{ matrix.os }}
     env:
       NATIVE_DAWN_BUILD_JOBS: '4'
+      NATIVE_DAWN_TARGET: ${{ matrix.android && matrix.target || '' }}
       NATIVE_DAWN_TEST_BACKEND: ${{ matrix.backend }}
       SCCACHE_GHA_ENABLED: 'true'
     steps:
@@ -44,15 +47,17 @@ jobs:
         with:
           python-version: '3.12'
       - uses: actions/setup-go@v5
+        if: ${{ !matrix.android }}
         with:
           go-version: '1.26.1'
           cache: false
       - name: Check runner architecture
+        if: ${{ !matrix.android }}
         shell: bash
         run: node -e "if (process.platform + '-' + process.arch !== '${{ matrix.target }}') throw Error('Runner is ' + process.platform + '-' + process.arch)"
 
       - name: Linux packages
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !matrix.android
         run: |
           sudo apt-get update
           sudo apt-get install -y libx11-dev libx11-xcb-dev libxcb1-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libwayland-dev libvulkan1 mesa-vulkan-drivers libegl1 libgles2 libegl-mesa0 xvfb libsdl2-dev
@@ -66,6 +71,9 @@ jobs:
           arch: ${{ matrix.target == 'win32-arm64' && 'arm64' || 'x64' }}
       - name: CMake and Ninja
         run: python -m pip install cmake==4.2.3 ninja==1.13.0
+      - name: Newest preinstalled NDK
+        if: matrix.android
+        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
 
       - name: Compiler cache
         id: sccache
@@ -91,6 +99,7 @@ jobs:
         run: npm run build
 
       - name: Node tests (Node 22)
+        if: ${{ !matrix.android }}
         run: npm test
       - name: C tests against the install prefix
         if: runner.os != 'Linux'
@@ -98,14 +107,14 @@ jobs:
         env:
           NATIVE_DAWN_TEST_SDL2: ${{ runner.os == 'macOS' && '1' || '0' }}
       - name: C tests against the install prefix (Xvfb)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !matrix.android
         run: xvfb-run -a npm run test:c
         env:
           NATIVE_DAWN_TEST_SDL2: '1'
           SDL_VIDEODRIVER: x11
       # The backend for GPUs without Vulkan, on Mesa's software OpenGL ES 3.2.
       - name: C tests on OpenGL ES (compatibility mode)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !matrix.android
         run: npm run test:c
         env:
           NATIVE_DAWN_TEST_BACKEND: opengles
@@ -121,69 +130,25 @@ jobs:
         if: matrix.sdl && runner.os != 'Linux'
         run: npm run test:window
       - name: Packed npm package with the release archive, from Node and C
+        if: ${{ !matrix.android }}
         run: npm run test:package
 
       - uses: actions/setup-node@v4
+        if: ${{ !matrix.android }}
         with:
           node-version: '24'
       - name: Node tests (Node 24, same binary)
+        if: ${{ !matrix.android }}
         run: npm test
 
-      - name: Upload archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.target }}
-          path: artifacts/*
-          if-no-files-found: error
-
-  android:
-    name: ${{ matrix.target }}
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [android-arm64, android-x64]
-    runs-on: ubuntu-22.04
-    env:
-      NATIVE_DAWN_TARGET: ${{ matrix.target }}
-      NATIVE_DAWN_BUILD_JOBS: '4'
-      SCCACHE_GHA_ENABLED: 'true'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: CMake and Ninja
-        run: python -m pip install cmake==4.2.3 ninja==1.13.0
-      - name: Newest preinstalled NDK
-        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
-      - name: Compiler cache
-        id: sccache
-        continue-on-error: true
-        uses: mozilla-actions/sccache-action@v0.0.9
-      - name: Use the compiler cache
-        if: steps.sccache.outcome == 'success'
-        run: sccache --version && echo "NATIVE_DAWN_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV"
-      - name: npm dependencies
-        run: npm ci --ignore-scripts
-      - name: Cache Dawn sources
-        uses: actions/cache@v4
-        with:
-          path: .cache/dawn
-          key: dawn-src-${{ matrix.target }}-${{ hashFiles('upstream.json', 'scripts/fetch-dependencies.py') }}
-      - name: Build
-        run: npm run build
-      - name: Enable KVM for the emulator
+      - name: Enable KVM for the Android emulator
+        if: matrix.android
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      # x86_64 image; arm64 code runs on it through Android's ARM translation.
       - name: C tests on an Android emulator
+        if: matrix.android
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -191,8 +156,10 @@ jobs:
           target: google_apis
           emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect
           script: npm run test:android
-      - name: Package
+      - name: Package the Android archive
+        if: matrix.android
         run: npm run package:binary
+
       - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
@@ -203,7 +170,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, android]
+    needs: build
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -216,7 +183,7 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-      - name: Check the tag and all eight archives
+      - name: Check the tag and all seven archives
         run: node scripts/check-release.mjs
       - name: Create the GitHub release
         env:

@@ -22,7 +22,7 @@ Installation downloads the archive for your platform from this repository's GitH
 | Linux (glibc; release builds run on Ubuntu 22.04 and newer) | x64, arm64 | Vulkan |
 | macOS 11+ | x64, arm64 | Metal |
 | Windows | x64, arm64 | D3D12 |
-| Android 8.0+ (API 26), C SDK only | arm64, x64 | Vulkan, OpenGL ES |
+| Android 8.0+ (API 26), C SDK only | arm64 | Vulkan, OpenGL ES |
 
 Linux builds support X11 and Wayland windows and also include the OpenGL ES backend (see [OpenGL ES](#opengl-es-compatibility-mode)). The Node addon needs Node.js 22 or newer.
 
@@ -166,7 +166,7 @@ Code written for compatibility mode also runs on full WebGPU. On Linux the backe
 
 ## Android
 
-Android archives (`android-arm64`, `android-x64`) hold the C SDK: `libwebgpu_dawn.so`, headers, the CMake package and `dawn.json`. There is no Node addon for Android, and npm installs don't fetch these; download them from the GitHub release. The library uses the static C++ runtime, needs only system libraries, and is aligned for 16 KB pages.
+The Android archive (`android-arm64`) holds the C SDK: `libwebgpu_dawn.so`, headers, the CMake package and `dawn.json`. There is no Node addon for Android, and npm installs don't fetch these; download them from the GitHub release. The library uses the static C++ runtime, needs only system libraries, and is aligned for 16 KB pages.
 
 With the NDK and CMake:
 
@@ -212,7 +212,7 @@ The build fetches the Dawn revision pinned in `upstream.json` and the dependenci
 Android builds cross-compile from Linux, macOS or Windows with the NDK (r27 or newer) and need no Go:
 
 ```sh
-NATIVE_DAWN_TARGET=android-arm64 npm run build   # or android-x64
+NATIVE_DAWN_TARGET=android-arm64 npm run build
 ```
 
 The NDK is found through `ANDROID_NDK_HOME`, `ANDROID_NDK_ROOT`, or the newest one under `$ANDROID_HOME/ndk`.
@@ -221,7 +221,7 @@ Environment variables:
 
 | Variable | Effect |
 | --- | --- |
-| `NATIVE_DAWN_TARGET` | `android-arm64` or `android-x64` to cross-compile; default is this machine |
+| `NATIVE_DAWN_TARGET` | `android-arm64` to cross-compile; default is this machine |
 | `NATIVE_DAWN_BUILD_JOBS` | Parallel compile jobs (default: up to 8) |
 | `NATIVE_DAWN_COMPILER_LAUNCHER` | Compiler launcher such as `sccache` or `ccache` |
 | `NATIVE_DAWN_BUILD_FROM_SOURCE=1` | Make `npm install` build instead of downloading |
@@ -244,9 +244,9 @@ Tests need a working adapter, hardware or software (Mesa's lavapipe on Linux, WA
 
 ## CI and releases
 
-[CI](.github/workflows/ci.yml) builds the six desktop targets on native runners and runs every suite above on each one, on Node 22 and 24, against the runner's software adapter. Linux also runs the C tests on OpenGL ES in compatibility mode. The window tests run everywhere except Windows ARM64, which has no @kmamal/sdl build. The two Android targets are cross-compiled on Linux and their C tests run on an x86_64 Android emulator; arm64 code runs there through Android's ARM translation.
+[CI](.github/workflows/ci.yml) builds the six desktop targets on native runners and runs every suite above on each one, on Node 22 and 24, against the runner's software adapter. Linux also runs the C tests on OpenGL ES in compatibility mode. The window tests run everywhere except Windows ARM64, which has no @kmamal/sdl build. Android is cross-compiled on Linux and its C tests run on an x86_64 Android emulator, through Android's ARM translation.
 
-Pushing a `v<version>` tag that matches `package.json` runs the same jobs, and if all eight pass, creates a GitHub release with the eight archives and their checksums. npm publishing is a separate, manual step after that, since `npm install` downloads from the release.
+Pushing a `v<version>` tag that matches `package.json` runs the same jobs, and if all seven pass, creates a GitHub release with the seven archives and their checksums. npm publishing is a separate, manual step after that, since `npm install` downloads from the release.
 
 ## License
 

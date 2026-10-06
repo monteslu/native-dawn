@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { spawnSync } from 'node:child_process'
-import { root, run, upstream, target, pkg, distDir, binDir, assertTarget, isAndroid, hasAddon } from './common.mjs'
+import { root, run, upstream, target, targets, pkg, distDir, binDir, assertTarget, isAndroid, hasAddon } from './common.mjs'
 
 assertTarget()
 const dawn = path.join(root, '.cache/dawn')
@@ -58,11 +58,11 @@ const ndk = isAndroid ? androidNdk() : null
 if (isAndroid) {
   args.push(
     `-DCMAKE_TOOLCHAIN_FILE=${path.join(ndk, 'build/cmake/android.toolchain.cmake')}`,
-    `-DANDROID_ABI=${target === 'android-arm64' ? 'arm64-v8a' : 'x86_64'}`,
+    '-DANDROID_ABI=arm64-v8a',
     '-DANDROID_PLATFORM=android-26',
     '-DANDROID_STL=c++_static',
   )
-} else if (target !== `${process.platform}-${process.arch}`) {
+} else if (target !== `${process.platform}-${process.arch}` || !targets.includes(target)) {
   throw new Error(`Cross-compiling ${target} is not supported; build it on a ${target} machine`)
 }
 if (process.platform === 'darwin') args.push(`-DCMAKE_OSX_ARCHITECTURES=${process.arch === 'arm64' ? 'arm64' : 'x86_64'}`, '-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0')

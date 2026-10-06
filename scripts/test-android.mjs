@@ -1,6 +1,7 @@
 // Builds test/c with the NDK against an Android prefix, pushes it to the
 // device or emulator adb is connected to, and runs it there.
-//   NATIVE_DAWN_TARGET=android-x64 node scripts/test-android.mjs [prefix]
+//   NATIVE_DAWN_TARGET=android-arm64 node scripts/test-android.mjs [prefix]
+// On an x86_64 emulator, the arm64 binary runs through Android's ARM translation.
 // NATIVE_DAWN_TEST_* variables are passed through to the device.
 import fs from 'node:fs'
 import os from 'node:os'
@@ -8,7 +9,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { root, run, target, distDir, isAndroid } from './common.mjs'
 
-if (!isAndroid) throw new Error('Set NATIVE_DAWN_TARGET=android-arm64 or android-x64')
+if (!isAndroid) throw new Error('Set NATIVE_DAWN_TARGET=android-arm64')
 const prefix = path.resolve(process.argv[2] || distDir)
 const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT
 function ndk() {
@@ -25,7 +26,7 @@ const remote = '/data/local/tmp/native-dawn'
 try {
   run('cmake', ['-S', path.join(root, 'test/c'), '-B', build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
     `-DCMAKE_TOOLCHAIN_FILE=${path.join(ndk(), 'build/cmake/android.toolchain.cmake')}`,
-    `-DANDROID_ABI=${target === 'android-arm64' ? 'arm64-v8a' : 'x86_64'}`, '-DANDROID_PLATFORM=android-26',
+    '-DANDROID_ABI=arm64-v8a', '-DANDROID_PLATFORM=android-26',
     `-DDawn_DIR=${path.join(prefix, 'lib/cmake/Dawn')}`, `-DCMAKE_FIND_ROOT_PATH=${prefix}`])
   run('cmake', ['--build', build])
   run(adb, ['shell', `rm -rf ${remote} && mkdir -p ${remote}`])
