@@ -14,9 +14,9 @@ test('installer rejects corrupt and mismatched archives and keeps the working bu
   const hash = async file => createHash('sha256').update(await fs.readFile(file)).digest('hex')
   const before = await hash(addon)
   const archive = path.join(temporary, 'invalid.tar.gz')
-  const install = () => spawnSync(process.execPath, ['scripts/install.mjs'], {
+  const install = (strict = true) => spawnSync(process.execPath, ['scripts/install.mjs'], {
     cwd: root, encoding: 'utf8', timeout: 30000,
-    env: { ...process.env, NATIVE_DAWN_BINARY: archive, NATIVE_DAWN_SKIP_INSTALL: '0', NATIVE_DAWN_BUILD_FROM_SOURCE: '0' },
+    env: { ...process.env, NATIVE_DAWN_BINARY: archive, NATIVE_DAWN_SKIP_INSTALL: '0', NATIVE_DAWN_BUILD_FROM_SOURCE: '0', NATIVE_DAWN_STRICT_INSTALL: strict ? '1' : '0' },
   })
   try {
     await fs.writeFile(archive, 'not an archive')
@@ -33,6 +33,14 @@ test('installer rejects corrupt and mismatched archives and keeps the working bu
     assert.ifError(mismatched.error)
     assert.equal(mismatched.status, 1)
     assert.match(mismatched.stderr, /does not match this package/)
+    assert.equal(await hash(addon), before)
+
+    // By default a failed install warns and exits 0, so packages that depend
+    // on native-dawn still install, and the working build is still untouched.
+    const lenient = install(false)
+    assert.ifError(lenient.error)
+    assert.equal(lenient.status, 0)
+    assert.match(lenient.stderr, /no native build installed: .*does not match this package/)
     assert.equal(await hash(addon), before)
   } finally { await fs.rm(temporary, { recursive: true, force: true }) }
 })

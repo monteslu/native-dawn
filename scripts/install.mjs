@@ -69,9 +69,14 @@ export async function install() {
   }
 }
 
+// A failed install leaves native-dawn without a native build but never fails
+// the surrounding npm install: packages that depend on it (webgpu-node, and
+// through it wasmcart) must still install on platforms native-dawn does not
+// cover, and only error when WebGPU is actually used. A bad archive is never
+// installed either way. NATIVE_DAWN_STRICT_INSTALL=1 makes failures fatal.
 try {
   await install()
 } catch (error) {
-  console.error(`native-dawn: ${error.message}\nTo build from source instead, install the toolchain in README.md and set NATIVE_DAWN_BUILD_FROM_SOURCE=1.`)
-  process.exitCode = 1
+  console.warn(`native-dawn: no native build installed: ${error.message}\nWebGPU will not be available on this machine; importing native-dawn will throw. To build from source, install the toolchain in README.md and set NATIVE_DAWN_BUILD_FROM_SOURCE=1.`)
+  if (process.env.NATIVE_DAWN_STRICT_INSTALL === '1') process.exitCode = 1
 }

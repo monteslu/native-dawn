@@ -15,11 +15,11 @@ Because the Node addon links the shared library instead of carrying its own copy
 npm install native-dawn
 ```
 
-Installation downloads the archive for your platform from this repository's GitHub releases, checks its SHA-256 and version, and loads the addon once to make sure it works.
+Installation downloads the archive for your platform from this repository's GitHub releases, checks its SHA-256 and version, and loads the addon once to make sure it works. If that fails (an unsupported platform, no network, a C library too old for the binary), the install prints a warning and still succeeds, so packages that depend on native-dawn install everywhere; importing native-dawn then throws. A corrupt or mismatched archive is never installed. Set `NATIVE_DAWN_STRICT_INSTALL=1` to make install failures fatal.
 
 | Platform | Architectures | Backend |
 | --- | --- | --- |
-| Linux (glibc; release builds run on Ubuntu 22.04 and newer) | x64, arm64 | Vulkan |
+| Linux (glibc 2.34+: Ubuntu 22.04, Debian 12 and newer) | x64, arm64 | Vulkan |
 | macOS 11+ | x64, arm64 | Metal |
 | Windows | x64, arm64 | D3D12 |
 | Android 8.0+ (API 26), C SDK only | arm64 | Vulkan, OpenGL ES |
@@ -229,6 +229,7 @@ Environment variables:
 | `NATIVE_DAWN_BUILD_FROM_SOURCE=1` | Make `npm install` build instead of downloading |
 | `NATIVE_DAWN_BINARY=/path/to/archive.tar.gz` | Install a local archive (with its `.sha256` beside it) |
 | `NATIVE_DAWN_SKIP_INSTALL=1` | Skip the install step entirely |
+| `NATIVE_DAWN_STRICT_INSTALL=1` | Fail `npm install` when no native build can be installed |
 
 ## Tests
 
