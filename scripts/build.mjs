@@ -74,9 +74,9 @@ if (process.env.NATIVE_DAWN_COMPILER_LAUNCHER) {
 }
 run('cmake', args, { env })
 const jobs = process.env.NATIVE_DAWN_BUILD_JOBS || String(Math.min(8, os.availableParallelism()))
-// Dawn loads dxcompiler.dll and dxil.dll at runtime; upstream only builds them
-// as dependencies of the static dawn_native, so ask for them by name.
-const buildTargets = ['webgpu_dawn', ...(hasAddon ? ['dawn_node'] : []), ...(target.startsWith('win32-') ? ['dxcompiler', 'copy_dxil_dll'] : [])]
+// Dawn loads dxcompiler.dll at runtime; upstream only builds it as a dependency
+// of the static dawn_native, so ask for it by name.
+const buildTargets = ['webgpu_dawn', ...(hasAddon ? ['dawn_node'] : []), ...(target.startsWith('win32-') ? ['dxcompiler'] : [])]
 run('cmake', ['--build', build, '--config', 'Release', '--target', ...buildTargets, '--parallel', jobs], { env })
 
 fs.rmSync(distDir, { recursive: true, force: true })
@@ -91,6 +91,22 @@ for (const name of fs.readdirSync(libDir)) {
   }
 }
 
+// A file from the newest Windows 10/11 SDK, e.g. bin/<version>/arm64/dxil.dll.
+function windowsSdkFile(arch, name) {
+  const roots = [process.env.WindowsSdkDir, path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Windows Kits', '10')].filter(Boolean)
+  for (const root of roots) {
+    const bin = path.join(root, 'bin')
+    if (!fs.existsSync(bin)) continue
+    const preferred = process.env.WindowsSDKVersion?.replace(/[\\/]+$/, '')
+    const versions = fs.readdirSync(bin).filter(v => /^10\./.test(v)).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
+    for (const version of preferred ? [preferred, ...versions] : versions) {
+      const file = path.join(bin, version, arch, name)
+      if (fs.existsSync(file)) return file
+    }
+  }
+  throw new Error(`No ${arch} ${name} in the Windows SDK`)
+}
+
 function findFile(dir, name) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const file = path.join(dir, entry.name)
@@ -99,10 +115,20 @@ function findFile(dir, name) {
   }
 }
 if (target.startsWith('win32-')) {
-  for (const name of ['dxcompiler.dll', 'dxil.dll']) {
-    const source = findFile(build, name)
-    if (!source) throw new Error(`Build did not produce ${name}`)
-    fs.copyFileSync(source, path.join(distDir, 'bin', name))
+  const arch = target === 'win32-arm64' ? 'arm64' : 'x64'
+  const dxcompiler = findFile(build, 'dxcompiler.dll')
+  if (!dxcompiler) throw new Error('Build did not produce dxcompiler.dll')
+  fs.copyFileSync(dxcompiler, path.join(distDir, 'bin', 'dxcompiler.dll'))
+  // dxil.dll (the DXIL validator/signer) comes from the Windows SDK. Dawn's own
+  // copy step always takes the x64 one, so pick the target's architecture here.
+  fs.copyFileSync(windowsSdkFile(arch, 'dxil.dll'), path.join(distDir, 'bin', 'dxil.dll'))
+  // A DLL for the wrong architecture fails to load at runtime with a misleading
+  // error, so check every shipped binary's PE machine type.
+  const machine = { x64: 0x8664, arm64: 0xaa64 }[arch]
+  for (const name of fs.readdirSync(path.join(distDir, 'bin')).filter(n => /\.(dll|node)$/.test(n))) {
+    const pe = fs.readFileSync(path.join(distDir, 'bin', name))
+    const actual = pe.readUInt16LE(pe.readUInt32LE(0x3c) + 4)
+    if (actual !== machine) throw new Error(`${name} is for machine 0x${actual.toString(16)}, not ${arch}`)
   }
 }
 if (isAndroid) {
