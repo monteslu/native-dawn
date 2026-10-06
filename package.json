@@ -1,6 +1,6 @@
 {
   "name": "native-dawn",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Prebuilt Dawn WebGPU for Node.js and native code: shared library, C headers, and Node-API bindings",
   "type": "module",
   "main": "index.js",
