@@ -5,7 +5,7 @@ Prebuilt [Dawn](https://dawn.googlesource.com/dawn), Google's WebGPU implementat
 - **Native code.** A shared `webgpu_dawn` library, the WebGPU C and C++ headers, and a CMake package, so a C or C++ program can use WebGPU without building Dawn.
 - **Node.js.** Dawn's own Node-API bindings, built against that same library, plus a swap chain for native windows.
 
-It is the WebGPU counterpart of [native-gles](https://github.com/monteslu/native-gles): the native layer, kept separate from the browser-style JavaScript API that sits on top of it (webgpu-node, as [webgl-node](https://github.com/monteslu/webgl-node) is for native-gles).
+It is the WebGPU counterpart of [native-gles](https://github.com/monteslu/native-gles): the native layer, kept separate from the browser-style JavaScript API that sits on top of it, [webgpu-node](https://github.com/monteslu/webgpu-node), as [webgl-node](https://github.com/monteslu/webgl-node) is for native-gles. If you want `navigator.gpu`, a canvas, or to run Three.js and other browser WebGPU code in Node, install webgpu-node; it depends on this package and installs it for you.
 
 Because the Node addon links the shared library instead of carrying its own copy of Dawn, JavaScript and native code in one process use the same Dawn. A `GPUDevice` created in JavaScript can be handed to a C++ addon as a `WGPUDevice`.
 
@@ -28,6 +28,14 @@ Linux builds support X11 and Wayland windows and also include the OpenGL ES back
 
 ## Using it from Node
 
+This package is the low-level layer: Dawn's WebGPU objects and a window swap chain. For the browser-style API (`navigator.gpu`, a canvas and `GPUCanvasContext`, `installGlobals()` for libraries such as Three.js, and SDL window presentation), use [webgpu-node](https://github.com/monteslu/webgpu-node) instead:
+
+```sh
+npm install webgpu-node   # installs native-dawn too
+```
+
+To use native-dawn directly:
+
 ```js
 import { create, globals } from 'native-dawn'
 
@@ -38,7 +46,7 @@ const device = await adapter.requestDevice()
 const buffer = device.createBuffer({ size: 16, usage: globals.GPUBufferUsage.COPY_DST | globals.GPUBufferUsage.MAP_READ })
 ```
 
-`gpu`, `adapter` and `device` are standard WebGPU objects. `globals` holds the WebGPU classes and constants (`GPUBufferUsage`, `GPUDevice`, `GPUValidationError`, ...). Nothing is installed on `globalThis` or `navigator`; webgpu-node does that, along with a canvas and `GPUCanvasContext`.
+`gpu`, `adapter` and `device` are standard WebGPU objects. `globals` holds the WebGPU classes and constants (`GPUBufferUsage`, `GPUDevice`, `GPUValidationError`, ...). Nothing is installed on `globalThis` or `navigator`; [webgpu-node](https://github.com/monteslu/webgpu-node) does that, along with a canvas and `GPUCanvasContext`.
 
 Adapters and devices stay valid even if the `gpu` object is garbage collected. Call `device.destroy()` when you are done to release GPU memory promptly. Only pending asynchronous work (a `mapAsync`, `onSubmittedWorkDone`, pipeline creation and the like) keeps Node running; an idle device does not, and it costs no CPU. Dawn notices a lost device (a driver reset, for example) on the next WebGPU call or asynchronous operation, and `device.lost` settles then.
 
