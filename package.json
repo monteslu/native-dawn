@@ -45,6 +45,7 @@
     "test:c": "node scripts/test-c.mjs",
     "test:window": "node test/window.mjs",
     "test:package": "node scripts/test-package.mjs",
+    "test:win-host": "node scripts/test-win-host.mjs",
     "package:binary": "node scripts/package-binary.mjs",
     "test:types": "tsc -p test/tsconfig.json",
     "test:android": "node scripts/test-android.mjs"

@@ -108,6 +108,12 @@ jobs:
       - name: Node tests (Node 22)
         if: ${{ !matrix.android }}
         run: npm test
+      # dawn.node delay-loads node.exe (Node-API) and resolves it to whatever
+      # program loads it: checked in node.exe and in a host that only exports
+      # Node-API, as programs embedding Node under another name do.
+      - name: Addon loads outside node.exe
+        if: runner.os == 'Windows'
+        run: npm run test:win-host
       - name: C tests against the install prefix
         if: runner.os != 'Linux'
         run: npm run test:c

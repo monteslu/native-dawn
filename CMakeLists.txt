@@ -77,6 +77,14 @@ if(NATIVE_DAWN_NODE)
     set_target_properties(dawn_node PROPERTIES INSTALL_RPATH "@loader_path" BUILD_WITH_INSTALL_RPATH ON)
   elseif(UNIX)
     set_target_properties(dawn_node PROPERTIES INSTALL_RPATH "$ORIGIN" BUILD_WITH_INSTALL_RPATH ON)
+  elseif(WIN32)
+    # Node-API is imported from node.exe. Delay-load it and resolve it to the
+    # module providing Node-API in the loading process (src/node/
+    # win_delay_load_hook.cc), so programs that embed Node under another name
+    # can load the addon too, as node-gyp addons do.
+    target_sources(dawn_node PRIVATE src/node/win_delay_load_hook.cc)
+    target_link_options(dawn_node PRIVATE "/DELAYLOAD:node.exe")
+    target_link_libraries(dawn_node PRIVATE delayimp)
   endif()
 
   # The addon sits next to the shared library: lib/ on Linux and macOS, bin/ on

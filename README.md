@@ -26,6 +26,8 @@ Installation downloads the archive for your platform from this repository's GitH
 
 Linux builds support X11 and Wayland windows and also include the OpenGL ES backend (see [OpenGL ES](#opengl-es-compatibility-mode)). The Node addon needs Node.js 22 or newer.
 
+The addon also loads into programs that embed Node, statically or as `libnode.dll`. On Linux and macOS it finds Node-API in the process that loads it. On Windows it delay-loads Node-API from `node.exe` and resolves that to the loading program, as node-gyp addons do, so a program under another name only has to export the Node-API functions.
+
 ## Using it from Node
 
 This package is the low-level layer: Dawn's WebGPU objects and a window swap chain. For the browser-style API (`navigator.gpu`, a canvas and `GPUCanvasContext`, `installGlobals()` for libraries such as Three.js, and SDL window presentation), use [webgpu-node](https://github.com/monteslu/webgpu-node) instead:
@@ -255,7 +257,7 @@ Tests need a working adapter, hardware or software (Mesa's lavapipe on Linux, WA
 
 ## CI and releases
 
-[CI](.github/workflows/ci.yml) builds the six desktop targets on native runners and runs every suite above on each one, on Node 22 and 24, against the runner's software adapter. Linux also runs the C tests on OpenGL ES in compatibility mode. The window tests run everywhere except Windows ARM64, which has no @kmamal/sdl build. Android is cross-compiled on Linux and its C tests run on an x86_64 Android emulator, through Android's ARM translation.
+[CI](.github/workflows/ci.yml) builds the six desktop targets on native runners and runs every suite above on each one, on Node 22 and 24, against the runner's software adapter. Linux also runs the C tests on OpenGL ES in compatibility mode. The window tests run everywhere except Windows ARM64, which has no @kmamal/sdl build. On Windows, CI also checks that the addon delay-loads `node.exe` and resolves Node-API from a test program that is not `node.exe` (`npm run test:win-host`). Android is cross-compiled on Linux and its C tests run on an x86_64 Android emulator, through Android's ARM translation.
 
 Pushing a `v<version>` tag that matches `package.json` runs the same jobs, and if all seven pass, creates a GitHub release with the seven archives and their checksums. npm publishing is a separate, manual step after that, since `npm install` downloads from the release.
 
