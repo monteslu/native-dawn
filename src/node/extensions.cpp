@@ -368,6 +368,11 @@ Napi::Value ForceDeviceLoss(const Napi::CallbackInfo& info) {
 
 bool NativeHandleOf(Napi::Object object, uint64_t& h) {
     h = 0;
+    // Only an object this addon wraps has a handle. The generated Unwrap()s
+    // test instanceof, which a Proxy of a WebGPU object passes, and then
+    // dereference the wrap it does not have.
+    void* wrapped = nullptr;
+    if (napi_unwrap(object.Env(), object, &wrapped) != napi_ok || !wrapped) return false;
 #define NATIVE_DAWN_HANDLE(Name, Native)                                                         \
     if (HandleOf<wgpu::interop::Name, wgpu::binding::Name>(                                     \
             object, h, [](const wgpu::binding::Name& b) -> const Native& { return b; }))       \

@@ -104,6 +104,7 @@ test('objectHandle gives the native handle of every kind of WebGPU object, and u
     assert.equal(typeof objectHandle(commands), 'bigint')
     assert.equal(objectHandle(device), deviceHandle(device))
     assert.equal(objectHandle({}), undefined)
+    assert.equal(objectHandle(new Proxy(device.queue, {})), undefined, 'a Proxy of a WebGPU object is not one')
     assert.equal(objectHandle(42), undefined)
     device.queue.submit([commands])
     texture.destroy()
@@ -147,6 +148,7 @@ test('wasmImports draws through Dawn directly with webgpu.h arguments, and hands
     const P = { pass: 8, pipeline: 16, group: 24, vertices: 32, uniform: 40, queue: 48 }
     fast.register(P.pass, pass); fast.register(P.pipeline, pipeline); fast.register(P.group, group)
     fast.register(P.vertices, vertices); fast.register(P.uniform, uniform); fast.register(P.queue, device.queue)
+    fast.register(56, new Proxy(device.queue, {}))  // not a WebGPU object: nothing registered
 
     const W = fast.imports
     W.wgpuQueueWriteBuffer(P.queue, P.uniform, 0n, 64, 16)
