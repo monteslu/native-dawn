@@ -44,6 +44,19 @@ export declare class NativeSurface {
 export declare function create(flags: string[]): GPU
 /** The WGPUDevice pointer behind a GPUDevice, for native code in this process. */
 export declare function deviceHandle(device: GPUDevice): bigint
+/**
+ * The native webgpu.h handle behind any WebGPU object from this addon
+ * (WGPUTexture, WGPURenderPassEncoder, WGPUQueue, ...), for native code in
+ * this process; undefined for anything else.
+ */
+export declare function objectHandle(object: object): bigint | undefined
+/**
+ * Dawn features WebGPU has no GPUFeatureName for (webgpu.h's WGPUFeatureName_
+ * names without the prefix, e.g. 'SharedTextureMemoryOpaqueFD'), requested by
+ * every later requestDevice on this adapter, for native code using them on
+ * that device. Returns the names the adapter supports, which are the ones added.
+ */
+export declare function addDeviceFeatures(adapter: GPUAdapter, names: string[]): string[]
 /** WebGPU interface objects and constants (GPUBufferUsage, GPUDevice, ...). */
 export declare const globals: Record<string, unknown>
 
@@ -52,5 +65,7 @@ declare const addon: {
   globals: typeof globals
   NativeSurface: typeof NativeSurface
   deviceHandle: typeof deviceHandle
+  objectHandle: typeof objectHandle
+  addDeviceFeatures: typeof addDeviceFeatures
 }
 export default addon

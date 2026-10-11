@@ -9,5 +9,5 @@ try {
 }
 
 export { paths }
-export const { create, globals, NativeSurface, deviceHandle } = addon
+export const { create, globals, NativeSurface, deviceHandle, objectHandle, addDeviceFeatures } = addon
 export default addon

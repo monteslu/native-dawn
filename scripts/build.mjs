@@ -48,6 +48,33 @@ insert('src/dawn/node/Module.cpp', '#include "dawn/dawn_proc.h"', '#include "daw
 insert('src/dawn/node/Module.cpp', '    dawnProcSetProcs(&dawn::native::GetProcs());', '    // native-dawn: wgpu* calls go straight to the shared webgpu_dawn library.')
 insert('src/dawn/node/Module.cpp', '    return exports;', '    native_dawn::Initialize(env, exports);\n    return exports;')
 insert('src/dawn/node/binding/GPUDevice.h', '    ~GPUDevice() override;', '    ~GPUDevice() override;\n    wgpu::Device GetNativeDawnDevice() const { return device_; }')
+// addDeviceFeatures(): Dawn-only features (shared texture memory, shared
+// fences) a later requestDevice on the adapter also asks for.
+insert('src/dawn/node/binding/GPUAdapter.h', '    wgpu::Adapter adapter_;', '    wgpu::Adapter adapter_;\n\n  public:\n    wgpu::Adapter GetNativeDawnAdapter() const { return adapter_; }\n\n  private:')
+insert('src/dawn/node/binding/GPUAdapter.cpp', '#include "src/dawn/node/binding/TogglesLoader.h"', '#include "src/dawn/node/binding/TogglesLoader.h"\n\n// native-dawn (src/node/extensions.cpp)\nnamespace native_dawn {\nvoid AddRequestedFeatures(WGPUAdapter adapter, std::vector<wgpu::FeatureName>& features);\n}')
+insert('src/dawn/node/binding/GPUAdapter.cpp', '    desc.requiredFeatureCount = requiredFeatures.size();', '    native_dawn::AddRequestedFeatures(adapter_.Get(), requiredFeatures);\n    desc.requiredFeatureCount = requiredFeatures.size();')
+// The adapter-id=<vendor>:<device> flag (hex PCI ids): one GPU exactly, where
+// Dawn's own adapter=<name> flag matches a substring of the device name.
+insert('src/dawn/node/binding/GPU.cpp', `        if (!deviceName.empty() &&
+            std::string_view(adapterInfo.device).find(deviceName) == std::string::npos) {
+            continue;
+        }`, `        if (!deviceName.empty() &&
+            std::string_view(adapterInfo.device).find(deviceName) == std::string::npos) {
+            continue;
+        }
+        // native-dawn: adapter-id=<vendor>:<device>, hex PCI ids
+        if (auto id = flags_.Get("adapter-id")) {
+            const auto colon = id->find(':');
+            if (colon == std::string::npos ||
+                adapterInfo.vendorID != std::stoul(id->substr(0, colon), nullptr, 16) ||
+                adapterInfo.deviceID != std::stoul(id->substr(colon + 1), nullptr, 16)) {
+                continue;
+            }
+        }`)
+// objectHandle(): the three wrappers Dawn gives no accessor for.
+insert('src/dawn/node/binding/GPUQueue.h', '    GPUQueue(wgpu::Queue queue, std::shared_ptr<AsyncRunner> async);', '    GPUQueue(wgpu::Queue queue, std::shared_ptr<AsyncRunner> async);\n    wgpu::Queue GetNativeDawnQueue() const { return queue_; }')
+insert('src/dawn/node/binding/GPUCommandEncoder.h', '    GPUCommandEncoder(wgpu::Device device,', '    wgpu::CommandEncoder GetNativeDawnEncoder() const { return enc_; }\n    GPUCommandEncoder(wgpu::Device device,')
+insert('src/dawn/node/binding/GPURenderBundleEncoder.h', '    GPURenderBundleEncoder(const wgpu::RenderBundleEncoderDescriptor& desc,', '    wgpu::RenderBundleEncoder GetNativeDawnEncoder() const { return enc_; }\n    GPURenderBundleEncoder(const wgpu::RenderBundleEncoderDescriptor& desc,')
 // Lifetime fixes for Dawn's Node bindings.
 //
 // The polling runner shares the instance with GPU. Upstream it holds a raw

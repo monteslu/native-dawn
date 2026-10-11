@@ -50,6 +50,8 @@ const buffer = device.createBuffer({ size: 16, usage: globals.GPUBufferUsage.COP
 
 `gpu`, `adapter` and `device` are standard WebGPU objects. `globals` holds the WebGPU classes and constants (`GPUBufferUsage`, `GPUDevice`, `GPUValidationError`, ...). Nothing is installed on `globalThis` or `navigator`; [webgpu-node](https://github.com/monteslu/webgpu-node) does that, along with a canvas and `GPUCanvasContext`.
 
+`create` takes Dawn's Node flags as `key=value` strings: `backend=vulkan` (or `opengles`, `metal`, `d3d12`), `adapter=<part of the device name>`, `enable-dawn-features=<toggles>` and `disable-dawn-features=<toggles>` (Dawn toggles such as `skip_validation`, applied to every device), and native-dawn's own `adapter-id=<vendor>:<device>`, the GPU with those PCI ids (hex, e.g. `1002:15d8`), for a program that must use one particular GPU.
+
 Adapters and devices stay valid even if the `gpu` object is garbage collected. Call `device.destroy()` when you are done to release GPU memory promptly. Only pending asynchronous work (a `mapAsync`, `onSubmittedWorkDone`, pipeline creation and the like) keeps Node running; an idle device does not, and it costs no CPU. Dawn notices a lost device (a driver reset, for example) on the next WebGPU call or asynchronous operation, and `device.lost` settles then.
 
 ### Presenting to a window
@@ -99,6 +101,10 @@ const pointer = deviceHandle(device)  // BigInt: the WGPUDevice
 ```
 
 The pointer is valid while the `GPUDevice` is alive. Native code that holds on to it longer should call `wgpuDeviceAddRef`. This works because the addon and your native code load the same `webgpu_dawn` library; build your addon against native-dawn's headers and library (see below).
+
+`addDeviceFeatures(adapter, names)` makes every later `requestDevice` on that adapter also ask for Dawn features WebGPU has no name for, such as `SharedTextureMemoryOpaqueFD` and `SharedFenceVkSemaphoreOpaqueFD` (`webgpu.h`'s `WGPUFeatureName_` names without the prefix), so native code can use them on the device JavaScript makes: importing memory another API shares, for example. It returns the names the adapter supports, which are the ones it adds.
+
+`objectHandle(object)` does the same for any other WebGPU object: an adapter, a texture, buffer, view, bind group, pipeline, queue, command or pass encoder, command buffer, sampler, query set or render bundle (and a device, the same pointer `deviceHandle` gives). It returns `undefined` for anything that is not one. Native code can then call `webgpu.h` on objects JavaScript made, for example to drive a render pass's hot calls from C++ while JavaScript creates the resources. Each pointer is valid while its JavaScript object is alive; call the type's `wgpu*AddRef` to keep it longer.
 
 ## Using it from C or C++
 

@@ -3,14 +3,34 @@
 #include "extensions.h"
 
 #include <algorithm>
+#include <map>
+#include <mutex>
 #include <cstring>
 #include <string>
 #include <vector>
 
 #include "native_dawn/window.h"
 #include "src/dawn/node/binding/Converter.h"
+#include "src/dawn/node/binding/GPUAdapter.h"
+#include "src/dawn/node/binding/GPUBindGroup.h"
+#include "src/dawn/node/binding/GPUBindGroupLayout.h"
+#include "src/dawn/node/binding/GPUBuffer.h"
+#include "src/dawn/node/binding/GPUCommandBuffer.h"
+#include "src/dawn/node/binding/GPUCommandEncoder.h"
+#include "src/dawn/node/binding/GPUComputePassEncoder.h"
+#include "src/dawn/node/binding/GPUComputePipeline.h"
 #include "src/dawn/node/binding/GPUDevice.h"
+#include "src/dawn/node/binding/GPUPipelineLayout.h"
+#include "src/dawn/node/binding/GPUQuerySet.h"
+#include "src/dawn/node/binding/GPUQueue.h"
+#include "src/dawn/node/binding/GPURenderBundle.h"
+#include "src/dawn/node/binding/GPURenderBundleEncoder.h"
+#include "src/dawn/node/binding/GPURenderPassEncoder.h"
+#include "src/dawn/node/binding/GPURenderPipeline.h"
+#include "src/dawn/node/binding/GPUSampler.h"
+#include "src/dawn/node/binding/GPUShaderModule.h"
 #include "src/dawn/node/binding/GPUTexture.h"
+#include "src/dawn/node/binding/GPUTextureView.h"
 
 namespace native_dawn {
 namespace {
@@ -263,6 +283,107 @@ Napi::Value DeviceHandle(const Napi::CallbackInfo& info) {
     return Napi::BigInt::New(env, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(device.Get())));
 }
 
+// The native handle behind any WebGPU object from this addon (WGPUTexture,
+// WGPURenderPassEncoder, WGPUQueue, ...), as a BigInt, for native code in the
+// same process that calls webgpu.h on the objects JavaScript made: a host
+// driving the hot calls from C++. Like deviceHandle, valid while the object
+// is alive (wgpu*AddRef to keep it longer). undefined for anything else.
+template <typename Interop, typename Binding, typename Get>
+bool HandleOf(Napi::Object object, uint64_t& out, Get get) {
+    auto* impl = Interop::Unwrap(object);
+    if (!impl) return false;
+    out = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(get(*static_cast<Binding*>(impl)).Get()));
+    return true;
+}
+
+Napi::Value ObjectHandle(const Napi::CallbackInfo& info) {
+    const auto env = info.Env();
+    if (!info[0].IsObject()) return env.Undefined();
+    const auto object = info[0].As<Napi::Object>();
+    uint64_t h = 0;
+#define NATIVE_DAWN_HANDLE(Name, Native)                                                         \
+    if (HandleOf<wgpu::interop::Name, wgpu::binding::Name>(                                     \
+            object, h, [](const wgpu::binding::Name& b) -> const Native& { return b; }))       \
+        return Napi::BigInt::New(env, h);
+    NATIVE_DAWN_HANDLE(GPURenderPassEncoder, wgpu::RenderPassEncoder)
+    NATIVE_DAWN_HANDLE(GPUBindGroup, wgpu::BindGroup)
+    NATIVE_DAWN_HANDLE(GPUBuffer, wgpu::Buffer)
+    NATIVE_DAWN_HANDLE(GPURenderPipeline, wgpu::RenderPipeline)
+    NATIVE_DAWN_HANDLE(GPUTextureView, wgpu::TextureView)
+    NATIVE_DAWN_HANDLE(GPUTexture, wgpu::Texture)
+    NATIVE_DAWN_HANDLE(GPUComputePassEncoder, wgpu::ComputePassEncoder)
+    NATIVE_DAWN_HANDLE(GPUComputePipeline, wgpu::ComputePipeline)
+    NATIVE_DAWN_HANDLE(GPUCommandBuffer, wgpu::CommandBuffer)
+    NATIVE_DAWN_HANDLE(GPUSampler, wgpu::Sampler)
+    NATIVE_DAWN_HANDLE(GPUQuerySet, wgpu::QuerySet)
+    NATIVE_DAWN_HANDLE(GPURenderBundle, wgpu::RenderBundle)
+    NATIVE_DAWN_HANDLE(GPUBindGroupLayout, wgpu::BindGroupLayout)
+    NATIVE_DAWN_HANDLE(GPUPipelineLayout, wgpu::PipelineLayout)
+    NATIVE_DAWN_HANDLE(GPUShaderModule, wgpu::ShaderModule)
+#undef NATIVE_DAWN_HANDLE
+    if (auto* q = wgpu::interop::GPUQueue::Unwrap(object))
+        return Napi::BigInt::New(env, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(static_cast<wgpu::binding::GPUQueue*>(q)->GetNativeDawnQueue().Get())));
+    if (auto* e = wgpu::interop::GPUCommandEncoder::Unwrap(object))
+        return Napi::BigInt::New(env, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(static_cast<wgpu::binding::GPUCommandEncoder*>(e)->GetNativeDawnEncoder().Get())));
+    if (auto* e = wgpu::interop::GPURenderBundleEncoder::Unwrap(object))
+        return Napi::BigInt::New(env, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(static_cast<wgpu::binding::GPURenderBundleEncoder*>(e)->GetNativeDawnEncoder().Get())));
+    if (auto* a = wgpu::interop::GPUAdapter::Unwrap(object))
+        return Napi::BigInt::New(env, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(static_cast<wgpu::binding::GPUAdapter*>(a)->GetNativeDawnAdapter().Get())));
+    if (wgpu::Device device = UnwrapDevice(object))
+        return Napi::BigInt::New(env, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(device.Get())));
+    return env.Undefined();
+}
+
+// addDeviceFeatures(adapter, names): Dawn features WebGPU's GPUFeatureName has
+// no name for (SharedTextureMemoryOpaqueFD, SharedFenceVkSemaphoreOpaqueFD,
+// ...: webgpu.h's WGPUFeatureName_ names without the prefix), requested by
+// every later requestDevice on this adapter, so native code can use them on
+// the device JavaScript gets. Returns the names the adapter has (only those
+// are added); throws on a name Dawn does not know.
+struct FeatureName { const char* name; wgpu::FeatureName value; };
+const FeatureName kDawnFeatures[] = {
+    { "SharedTextureMemoryVkDedicatedAllocation", wgpu::FeatureName::SharedTextureMemoryVkDedicatedAllocation },
+    { "SharedTextureMemoryOpaqueFD", wgpu::FeatureName::SharedTextureMemoryOpaqueFD },
+    { "SharedTextureMemoryDmaBuf", wgpu::FeatureName::SharedTextureMemoryDmaBuf },
+    { "SharedTextureMemoryZirconHandle", wgpu::FeatureName::SharedTextureMemoryZirconHandle },
+    { "SharedTextureMemoryDXGISharedHandle", wgpu::FeatureName::SharedTextureMemoryDXGISharedHandle },
+    { "SharedTextureMemoryD3D11Texture2D", wgpu::FeatureName::SharedTextureMemoryD3D11Texture2D },
+    { "SharedTextureMemoryIOSurface", wgpu::FeatureName::SharedTextureMemoryIOSurface },
+    { "SharedTextureMemoryEGLImage", wgpu::FeatureName::SharedTextureMemoryEGLImage },
+    { "SharedFenceVkSemaphoreOpaqueFD", wgpu::FeatureName::SharedFenceVkSemaphoreOpaqueFD },
+    { "SharedFenceSyncFD", wgpu::FeatureName::SharedFenceSyncFD },
+    { "SharedFenceVkSemaphoreZirconHandle", wgpu::FeatureName::SharedFenceVkSemaphoreZirconHandle },
+    { "SharedFenceDXGISharedHandle", wgpu::FeatureName::SharedFenceDXGISharedHandle },
+    { "SharedFenceMTLSharedEvent", wgpu::FeatureName::SharedFenceMTLSharedEvent },
+    { "SharedFenceEGLSync", wgpu::FeatureName::SharedFenceEGLSync },
+};
+std::mutex g_features_mutex;
+std::map<WGPUAdapter, std::vector<wgpu::FeatureName>> g_features;
+
+Napi::Value AddDeviceFeatures(const Napi::CallbackInfo& info) {
+    const auto env = info.Env();
+    auto* binding = info[0].IsObject() ? wgpu::interop::GPUAdapter::Unwrap(info[0].As<Napi::Object>()) : nullptr;
+    if (!binding) FAIL_VALUE(env, "Expected a GPUAdapter from native-dawn", env.Undefined());
+    if (!info[1].IsArray()) FAIL_VALUE(env, "Expected an array of feature names", env.Undefined());
+    wgpu::Adapter adapter = static_cast<wgpu::binding::GPUAdapter*>(binding)->GetNativeDawnAdapter();
+    auto names = info[1].As<Napi::Array>();
+    auto added = Napi::Array::New(env);
+    std::vector<wgpu::FeatureName> features;
+    for (uint32_t i = 0; i < names.Length(); i++) {
+        const std::string name = names.Get(i).ToString().Utf8Value();
+        const FeatureName* f = nullptr;
+        for (const auto& k : kDawnFeatures)
+            if (name == k.name) f = &k;
+        if (!f) FAIL_VALUE(env, "Unknown Dawn feature: " + name, env.Undefined());
+        if (!adapter.HasFeature(f->value)) continue;
+        features.push_back(f->value);
+        added.Set(added.Length(), Napi::String::New(env, f->name));
+    }
+    std::lock_guard<std::mutex> lock(g_features_mutex);
+    g_features[adapter.Get()] = std::move(features);
+    return added;
+}
+
 // Test hook: loses the device as a driver reset would, so tests can check how
 // device.lost is delivered. Not part of the public API.
 Napi::Value ForceDeviceLoss(const Napi::CallbackInfo& info) {
@@ -276,9 +397,19 @@ Napi::Value ForceDeviceLoss(const Napi::CallbackInfo& info) {
 
 }  // namespace
 
+void AddRequestedFeatures(WGPUAdapter adapter, std::vector<wgpu::FeatureName>& features) {
+    std::lock_guard<std::mutex> lock(g_features_mutex);
+    auto it = g_features.find(adapter);
+    if (it == g_features.end()) return;
+    for (auto f : it->second)
+        if (std::find(features.begin(), features.end(), f) == features.end()) features.push_back(f);
+}
+
 void Initialize(Napi::Env env, Napi::Object exports) {
     Surface::Init(env, exports);
     exports.Set("deviceHandle", Napi::Function::New(env, DeviceHandle, "deviceHandle"));
+    exports.Set("objectHandle", Napi::Function::New(env, ObjectHandle, "objectHandle"));
+    exports.Set("addDeviceFeatures", Napi::Function::New(env, AddDeviceFeatures, "addDeviceFeatures"));
     exports.Set("_forceDeviceLoss", Napi::Function::New(env, ForceDeviceLoss, "_forceDeviceLoss"));
 }
 

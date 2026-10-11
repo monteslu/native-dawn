@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { globals, deviceHandle } from '../index.js'
-import { setup, compute, pixels, clear, GPUBufferUsage, GPUMapMode, GPUTextureUsage } from './helpers.mjs'
+import fs from 'node:fs'
+import { create, globals, deviceHandle, objectHandle, addDeviceFeatures } from '../index.js'
+import { setup, flags, adapterOptions, compute, pixels, clear, GPUBufferUsage, GPUMapMode, GPUTextureUsage } from './helpers.mjs'
 
 test('compute dispatch, async pipeline creation and mapped readback', async () => {
   const { device } = await setup()
@@ -78,4 +79,65 @@ test('deviceHandle exposes the WGPUDevice pointer and rejects other objects', as
     assert.throws(() => deviceHandle({}), /GPUDevice/)
     assert.throws(() => deviceHandle(device.queue), /GPUDevice/)
   } finally { device.destroy() }
+})
+
+test('objectHandle gives the native handle of every kind of WebGPU object, and undefined otherwise', async () => {
+  const { device } = await setup()
+  try {
+    const texture = device.createTexture({ size: [4, 4], format: 'rgba8unorm', usage: globals.GPUTextureUsage.RENDER_ATTACHMENT })
+    const view = texture.createView()
+    const buffer = device.createBuffer({ size: 16, usage: globals.GPUBufferUsage.UNIFORM })
+    const sampler = device.createSampler()
+    const encoder = device.createCommandEncoder()
+    const pass = encoder.beginRenderPass({ colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store' }] })
+    const objects = { texture, view, buffer, sampler, encoder, pass, queue: device.queue }
+    const handles = {}
+    for (const [name, object] of Object.entries(objects)) {
+      handles[name] = objectHandle(object)
+      assert.equal(typeof handles[name], 'bigint', name)
+      assert.notEqual(handles[name], 0n, name)
+      assert.equal(objectHandle(object), handles[name], `${name}: the same handle every time`)
+    }
+    assert.equal(new Set(Object.values(handles)).size, Object.keys(handles).length, 'distinct objects, distinct handles')
+    pass.end()
+    const commands = encoder.finish()
+    assert.equal(typeof objectHandle(commands), 'bigint')
+    assert.equal(objectHandle(device), deviceHandle(device))
+    assert.equal(objectHandle({}), undefined)
+    assert.equal(objectHandle(42), undefined)
+    device.queue.submit([commands])
+    texture.destroy()
+  } finally { device.destroy() }
+})
+
+test('addDeviceFeatures adds the Dawn features the adapter has to the next requestDevice', async () => {
+  const adapter = await create(flags()).requestAdapter(adapterOptions())
+  assert.equal(typeof objectHandle(adapter), 'bigint', 'an adapter has a handle too')
+  const added = addDeviceFeatures(adapter, ['SharedTextureMemoryOpaqueFD', 'SharedFenceVkSemaphoreOpaqueFD', 'SharedTextureMemoryIOSurface'])
+  assert.ok(Array.isArray(added))
+  for (const name of added) assert.ok(['SharedTextureMemoryOpaqueFD', 'SharedFenceVkSemaphoreOpaqueFD', 'SharedTextureMemoryIOSurface'].includes(name))
+  const device = await adapter.requestDevice()
+  device.destroy()
+  assert.throws(() => addDeviceFeatures(adapter, ['NoSuchFeature']), /Unknown Dawn feature/)
+  assert.throws(() => addDeviceFeatures({}, []), /GPUAdapter/)
+})
+
+test('the adapter-id flag picks the adapter with those PCI ids, and none for ids no GPU has', async () => {
+  await assert.rejects(create([...flags(), 'adapter-id=ffff:ffff']).requestAdapter(adapterOptions()), /no adapter|no suitable/)
+  // Linux lists the GPUs' PCI ids in sysfs: asking for each one gives an
+  // adapter, and one of them is the default adapter
+  if (process.platform !== 'linux' || process.env.NATIVE_DAWN_TEST_FALLBACK === '1') return
+  const adapter = await create(flags()).requestAdapter(adapterOptions())
+  const ids = new Set()
+  for (const node of fs.readdirSync('/sys/class/drm').filter((n) => /^renderD\d+$/.test(n))) {
+    const read = (f) => fs.readFileSync(`/sys/class/drm/${node}/device/${f}`, 'utf8').trim().replace(/^0x/, '')
+    try { ids.add(`${read('vendor')}:${read('device')}`) } catch { /* not a PCI device */ }
+  }
+  const names = []
+  for (const id of ids) {
+    const a = await create([...flags(), `adapter-id=${id}`]).requestAdapter(adapterOptions()).catch(() => null)
+    if (a) names.push(a.info.device)
+  }
+  if (!ids.size || adapter.info.isFallbackAdapter) return // a software adapter: no PCI GPU behind it
+  assert.ok(names.includes(adapter.info.device), `the default adapter (${adapter.info.device}) is one of ${[...ids].join(', ')}: ${names.join(', ')}`)
 })
