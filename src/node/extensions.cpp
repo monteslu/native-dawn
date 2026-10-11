@@ -298,40 +298,9 @@ bool HandleOf(Napi::Object object, uint64_t& out, Get get) {
 
 Napi::Value ObjectHandle(const Napi::CallbackInfo& info) {
     const auto env = info.Env();
-    if (!info[0].IsObject()) return env.Undefined();
-    const auto object = info[0].As<Napi::Object>();
     uint64_t h = 0;
-#define NATIVE_DAWN_HANDLE(Name, Native)                                                         \
-    if (HandleOf<wgpu::interop::Name, wgpu::binding::Name>(                                     \
-            object, h, [](const wgpu::binding::Name& b) -> const Native& { return b; }))       \
-        return Napi::BigInt::New(env, h);
-    NATIVE_DAWN_HANDLE(GPURenderPassEncoder, wgpu::RenderPassEncoder)
-    NATIVE_DAWN_HANDLE(GPUBindGroup, wgpu::BindGroup)
-    NATIVE_DAWN_HANDLE(GPUBuffer, wgpu::Buffer)
-    NATIVE_DAWN_HANDLE(GPURenderPipeline, wgpu::RenderPipeline)
-    NATIVE_DAWN_HANDLE(GPUTextureView, wgpu::TextureView)
-    NATIVE_DAWN_HANDLE(GPUTexture, wgpu::Texture)
-    NATIVE_DAWN_HANDLE(GPUComputePassEncoder, wgpu::ComputePassEncoder)
-    NATIVE_DAWN_HANDLE(GPUComputePipeline, wgpu::ComputePipeline)
-    NATIVE_DAWN_HANDLE(GPUCommandBuffer, wgpu::CommandBuffer)
-    NATIVE_DAWN_HANDLE(GPUSampler, wgpu::Sampler)
-    NATIVE_DAWN_HANDLE(GPUQuerySet, wgpu::QuerySet)
-    NATIVE_DAWN_HANDLE(GPURenderBundle, wgpu::RenderBundle)
-    NATIVE_DAWN_HANDLE(GPUBindGroupLayout, wgpu::BindGroupLayout)
-    NATIVE_DAWN_HANDLE(GPUPipelineLayout, wgpu::PipelineLayout)
-    NATIVE_DAWN_HANDLE(GPUShaderModule, wgpu::ShaderModule)
-#undef NATIVE_DAWN_HANDLE
-    if (auto* q = wgpu::interop::GPUQueue::Unwrap(object))
-        return Napi::BigInt::New(env, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(static_cast<wgpu::binding::GPUQueue*>(q)->GetNativeDawnQueue().Get())));
-    if (auto* e = wgpu::interop::GPUCommandEncoder::Unwrap(object))
-        return Napi::BigInt::New(env, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(static_cast<wgpu::binding::GPUCommandEncoder*>(e)->GetNativeDawnEncoder().Get())));
-    if (auto* e = wgpu::interop::GPURenderBundleEncoder::Unwrap(object))
-        return Napi::BigInt::New(env, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(static_cast<wgpu::binding::GPURenderBundleEncoder*>(e)->GetNativeDawnEncoder().Get())));
-    if (auto* a = wgpu::interop::GPUAdapter::Unwrap(object))
-        return Napi::BigInt::New(env, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(static_cast<wgpu::binding::GPUAdapter*>(a)->GetNativeDawnAdapter().Get())));
-    if (wgpu::Device device = UnwrapDevice(object))
-        return Napi::BigInt::New(env, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(device.Get())));
-    return env.Undefined();
+    if (!info[0].IsObject() || !NativeHandleOf(info[0].As<Napi::Object>(), h)) return env.Undefined();
+    return Napi::BigInt::New(env, h);
 }
 
 // addDeviceFeatures(adapter, names): Dawn features WebGPU's GPUFeatureName has
@@ -397,6 +366,41 @@ Napi::Value ForceDeviceLoss(const Napi::CallbackInfo& info) {
 
 }  // namespace
 
+bool NativeHandleOf(Napi::Object object, uint64_t& h) {
+    h = 0;
+#define NATIVE_DAWN_HANDLE(Name, Native)                                                         \
+    if (HandleOf<wgpu::interop::Name, wgpu::binding::Name>(                                     \
+            object, h, [](const wgpu::binding::Name& b) -> const Native& { return b; }))       \
+        return true;
+    NATIVE_DAWN_HANDLE(GPURenderPassEncoder, wgpu::RenderPassEncoder)
+    NATIVE_DAWN_HANDLE(GPUBindGroup, wgpu::BindGroup)
+    NATIVE_DAWN_HANDLE(GPUBuffer, wgpu::Buffer)
+    NATIVE_DAWN_HANDLE(GPURenderPipeline, wgpu::RenderPipeline)
+    NATIVE_DAWN_HANDLE(GPUTextureView, wgpu::TextureView)
+    NATIVE_DAWN_HANDLE(GPUTexture, wgpu::Texture)
+    NATIVE_DAWN_HANDLE(GPUComputePassEncoder, wgpu::ComputePassEncoder)
+    NATIVE_DAWN_HANDLE(GPUComputePipeline, wgpu::ComputePipeline)
+    NATIVE_DAWN_HANDLE(GPUCommandBuffer, wgpu::CommandBuffer)
+    NATIVE_DAWN_HANDLE(GPUSampler, wgpu::Sampler)
+    NATIVE_DAWN_HANDLE(GPUQuerySet, wgpu::QuerySet)
+    NATIVE_DAWN_HANDLE(GPURenderBundle, wgpu::RenderBundle)
+    NATIVE_DAWN_HANDLE(GPUBindGroupLayout, wgpu::BindGroupLayout)
+    NATIVE_DAWN_HANDLE(GPUPipelineLayout, wgpu::PipelineLayout)
+    NATIVE_DAWN_HANDLE(GPUShaderModule, wgpu::ShaderModule)
+#undef NATIVE_DAWN_HANDLE
+    auto set = [&](const void* p) { h = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(p)); return true; };
+    if (auto* q = wgpu::interop::GPUQueue::Unwrap(object))
+        return set(static_cast<wgpu::binding::GPUQueue*>(q)->GetNativeDawnQueue().Get());
+    if (auto* e = wgpu::interop::GPUCommandEncoder::Unwrap(object))
+        return set(static_cast<wgpu::binding::GPUCommandEncoder*>(e)->GetNativeDawnEncoder().Get());
+    if (auto* e = wgpu::interop::GPURenderBundleEncoder::Unwrap(object))
+        return set(static_cast<wgpu::binding::GPURenderBundleEncoder*>(e)->GetNativeDawnEncoder().Get());
+    if (auto* a = wgpu::interop::GPUAdapter::Unwrap(object))
+        return set(static_cast<wgpu::binding::GPUAdapter*>(a)->GetNativeDawnAdapter().Get());
+    if (wgpu::Device device = UnwrapDevice(object)) return set(device.Get());
+    return false;
+}
+
 void AddRequestedFeatures(WGPUAdapter adapter, std::vector<wgpu::FeatureName>& features) {
     std::lock_guard<std::mutex> lock(g_features_mutex);
     auto it = g_features.find(adapter);
@@ -410,6 +414,7 @@ void Initialize(Napi::Env env, Napi::Object exports) {
     exports.Set("deviceHandle", Napi::Function::New(env, DeviceHandle, "deviceHandle"));
     exports.Set("objectHandle", Napi::Function::New(env, ObjectHandle, "objectHandle"));
     exports.Set("addDeviceFeatures", Napi::Function::New(env, AddDeviceFeatures, "addDeviceFeatures"));
+    InitWasmImports(env, exports);
     exports.Set("_forceDeviceLoss", Napi::Function::New(env, ForceDeviceLoss, "_forceDeviceLoss"));
 }
 

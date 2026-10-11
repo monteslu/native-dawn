@@ -70,7 +70,7 @@ if(NATIVE_DAWN_NODE)
     target_compile_definitions(${target} PRIVATE WGPU_SHARED_LIBRARY DAWN_NATIVE_SHARED_LIBRARY)
   endforeach()
 
-  target_sources(dawn_node PRIVATE src/node/extensions.cpp)
+  target_sources(dawn_node PRIVATE src/node/extensions.cpp src/node/wasm_imports.cpp)
   target_include_directories(dawn_node PRIVATE src/node include)
 
   if(APPLE)

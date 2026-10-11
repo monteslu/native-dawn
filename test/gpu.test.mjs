@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { create, globals, deviceHandle, objectHandle, addDeviceFeatures } from '../index.js'
+import { create, globals, deviceHandle, objectHandle, addDeviceFeatures, wasmImports } from '../index.js'
 import { setup, flags, adapterOptions, compute, pixels, clear, GPUBufferUsage, GPUMapMode, GPUTextureUsage } from './helpers.mjs'
 
 test('compute dispatch, async pipeline creation and mapped readback', async () => {
@@ -107,6 +107,70 @@ test('objectHandle gives the native handle of every kind of WebGPU object, and u
     assert.equal(objectHandle(42), undefined)
     device.queue.submit([commands])
     texture.destroy()
+  } finally { device.destroy() }
+})
+
+test('wasmImports draws through Dawn directly with webgpu.h arguments, and hands what it cannot serve to the glue', async () => {
+  const { device } = await setup()
+  try {
+    const texture = device.createTexture({ size: [4, 4], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
+    const module = device.createShaderModule({ code: `
+      @group(0) @binding(0) var<uniform> color: vec4f;
+      @vertex fn vs(@location(0) p: vec2f) -> @builtin(position) vec4f { return vec4f(p, 0, 1); }
+      @fragment fn fs() -> @location(0) vec4f { return color; }` })
+    const pipeline = device.createRenderPipeline({ layout: 'auto',
+      vertex: { module, entryPoint: 'vs', buffers: [{ arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] }] },
+      fragment: { module, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] } })
+    const vertices = device.createBuffer({ size: 24, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST })
+    device.queue.writeBuffer(vertices, 0, new Float32Array([-1, -1, 3, -1, -1, 3]))
+    const uniform = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    const group = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: uniform, size: 16 } }] })
+    const encoder = device.createCommandEncoder()
+    const pass = encoder.beginRenderPass({ colorAttachments: [{ view: texture.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] })
+
+    // The glue's functions: only reached for what the direct calls cannot serve.
+    const glueCalls = []
+    const glue = {
+      wgpuRenderPassEncoderSetPipeline: (...args) => glueCalls.push(['setPipeline', ...args]),
+      wgpuRenderPassEncoderSetBindGroup: (...args) => glueCalls.push(['setBindGroup', ...args]),
+      wgpuRenderPassEncoderSetVertexBuffer: (...args) => glueCalls.push(['setVertexBuffer', ...args]),
+      wgpuRenderPassEncoderDraw: (...args) => glueCalls.push(['draw', ...args]),
+      wgpuQueueWriteBuffer: (...args) => glueCalls.push(['writeBuffer', ...args]),
+      notAnImport: () => {},
+    }
+    const fast = wasmImports(glue)
+    assert.deepEqual(Object.keys(fast.imports).sort(), Object.keys(glue).filter(n => n !== 'notAnImport').sort())
+    // "wasm memory": the color at 64, a uniform offset (u32) at 128
+    const heap = new Uint8Array(1024)
+    new Float32Array(heap.buffer, 64, 4).set([0, 1, 0, 1])
+    fast.memory(heap)
+    const P = { pass: 8, pipeline: 16, group: 24, vertices: 32, uniform: 40, queue: 48 }
+    fast.register(P.pass, pass); fast.register(P.pipeline, pipeline); fast.register(P.group, group)
+    fast.register(P.vertices, vertices); fast.register(P.uniform, uniform); fast.register(P.queue, device.queue)
+
+    const W = fast.imports
+    W.wgpuQueueWriteBuffer(P.queue, P.uniform, 0n, 64, 16)
+    W.wgpuRenderPassEncoderSetPipeline(P.pass, P.pipeline)
+    W.wgpuRenderPassEncoderSetBindGroup(P.pass, 0, P.group, 0, 0)
+    W.wgpuRenderPassEncoderSetVertexBuffer(P.pass, 0, P.vertices, 0n, -1n)  // -1n: WGPU_WHOLE_SIZE
+    W.wgpuRenderPassEncoderDraw(P.pass, 3, 1, 0, 0)
+    assert.deepEqual(glueCalls, [])
+    assert.deepEqual(fast.stats(), { native: 5, fallback: 0, handles: 6 })
+
+    // an object never registered, or memory outside the view: the glue answers
+    W.wgpuRenderPassEncoderSetPipeline(P.pass, 999)
+    W.wgpuQueueWriteBuffer(P.queue, P.uniform, 0n, 1020, 16)
+    fast.forget(P.vertices)
+    W.wgpuRenderPassEncoderSetVertexBuffer(P.pass, 0, P.vertices, 0n, 24n)
+    assert.deepEqual(glueCalls.map(c => c[0]), ['setPipeline', 'writeBuffer', 'setVertexBuffer'])
+    assert.deepEqual(glueCalls[1].slice(1), [P.queue, P.uniform, 0n, 1020, 16], 'the glue gets the call\'s own arguments')
+    assert.equal(fast.stats().fallback, 3)
+
+    pass.end()
+    device.queue.submit([encoder.finish()])
+    const out = await pixels(device, texture)
+    for (let i = 0; i < out.length; i += 4) assert.deepEqual([...out.subarray(i, i + 4)], [0, 255, 0, 255])
+    texture.destroy(); vertices.destroy(); uniform.destroy()
   } finally { device.destroy() }
 })
 

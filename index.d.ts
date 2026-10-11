@@ -57,6 +57,25 @@ export declare function objectHandle(object: object): bigint | undefined
  * that device. Returns the names the adapter supports, which are the ones added.
  */
 export declare function addDeviceFeatures(adapter: GPUAdapter, names: string[]): string[]
+/** wasmImports(): direct webgpu.h imports for a WebAssembly program (see README). */
+export interface WasmImports {
+  /** Import functions, by webgpu.h name, taking the glue's arguments. */
+  imports: Record<string, (...args: (number | bigint)[]) => unknown>
+  /** The object behind the program's pointer (a pass, pipeline, bind group, buffer, queue, ...). */
+  register(pointer: number, object: object): void
+  /** The program released the object behind this pointer. */
+  forget(pointer: number): void
+  /** The program's memory (hand it over again when the memory's buffer changes). */
+  memory(view: Uint8Array): void
+  /** Calls served directly, calls answered by the glue, registered pointers. */
+  stats(): { native: number, fallback: number, handles: number }
+}
+/**
+ * Direct calls into Dawn for the hot imports of a WebAssembly program built
+ * against emdawnwebgpu's webgpu.h; `glue` holds the import functions it would
+ * otherwise get, which answer any call these cannot serve.
+ */
+export declare function wasmImports(glue: Record<string, Function>): WasmImports
 /** WebGPU interface objects and constants (GPUBufferUsage, GPUDevice, ...). */
 export declare const globals: Record<string, unknown>
 

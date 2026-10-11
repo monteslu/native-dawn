@@ -106,6 +106,15 @@ The pointer is valid while the `GPUDevice` is alive. Native code that holds on t
 
 `objectHandle(object)` does the same for any other WebGPU object: an adapter, a texture, buffer, view, bind group, pipeline, queue, command or pass encoder, command buffer, sampler, query set or render bundle (and a device, the same pointer `deviceHandle` gives). It returns `undefined` for anything that is not one. Native code can then call `webgpu.h` on objects JavaScript made, for example to drive a render pass's hot calls from C++ while JavaScript creates the resources. Each pointer is valid while its JavaScript object is alive; call the type's `wgpu*AddRef` to keep it longer.
 
+`wasmImports(glue)` serves a WebAssembly program's hottest `webgpu.h` imports by calling Dawn directly. The program is one built against Emscripten's WebGPU port (emdawnwebgpu): its WebGPU objects are 32-bit pointers in its memory, and 64-bit sizes and offsets arrive as BigInt. `glue` is the object of import functions the program would otherwise get (the port's JavaScript). The result is `{ imports, register, forget, memory, stats }`:
+
+- `imports`: functions for the program's imports, with the glue's argument order. They cover a render or compute pass's state, draws and dispatches, and `wgpuQueueWriteBuffer`. Use them in place of the glue's functions of the same names.
+- `register(pointer, object)` and `forget(pointer)`: the glue reports each object it gives the program and each one the program releases.
+- `memory(view)`: a `Uint8Array` over the program's memory, handed over again whenever the memory's buffer changes.
+- `stats()`: `{ native, fallback, handles }`, the number of calls served directly and the number answered by the glue.
+
+A call that names an unregistered pointer, or memory outside the view, goes to the glue's function, so results are the same either way. Each direct call costs a fraction of a microsecond. The same call through the glue and the bindings costs about 1.5 us.
+
 ## Using it from C or C++
 
 The package holds a normal install prefix:

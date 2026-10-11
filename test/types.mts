@@ -1,4 +1,4 @@
-import addon, { create, globals, deviceHandle, NativeSurface, paths, type NativeWindow } from 'native-dawn'
+import addon, { create, globals, deviceHandle, NativeSurface, paths, wasmImports, type NativeWindow, type WasmImports } from 'native-dawn'
 import { paths as pathsOnly } from 'native-dawn/paths'
 
 const gpu: GPU = create(['backend=vulkan'])
@@ -13,6 +13,13 @@ if (adapter) {
   texture.createView()
   surface.present()
   surface.destroy()
+  const fast: WasmImports = wasmImports({ wgpuRenderPassEncoderDraw: () => {} })
+  fast.memory(new Uint8Array(16))
+  fast.register(8, device.queue)
+  fast.forget(8)
+  fast.imports.wgpuRenderPassEncoderDraw?.(8, 3, 1, 0, 0)
+  const served: number = fast.stats().native
+  void served
   device.destroy()
 }
 const library: string = paths.library
