@@ -1,7 +1,7 @@
 // One lifetime case per process, run by lifetime.test.mjs, which also checks
 // how the process ends. Prints "CASE-OK" when the case's own checks hold.
 import addon, { create } from '../index.js'
-import { flags, adapterOptions, pixels, clear, GPUTextureUsage } from './helpers.mjs'
+import { flags, adapterOptions, pixels, clear, GPUBufferUsage, GPUMapMode, GPUTextureUsage } from './helpers.mjs'
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function device(gpu) {
@@ -49,6 +49,36 @@ const cases = {
     dev.destroy()
     await sleep(200)
     if (info?.reason !== 'destroyed') throw new Error(`device.lost was not settled as destroyed: ${info?.reason}`)
+  },
+  // Buffers whose JavaScript wrappers are collected while their mapAsync is
+  // still pending: Dawn answers each map at a later poll, after the GPUBuffer
+  // behind the wrapper was freed. The callback used to write into it, which
+  // corrupted the heap within the first few hundred buffers.
+  async mapCollected() {
+    const dev = await device(create(flags()))
+    for (let i = 0; i < 4000; ++i) {
+      dev.createBuffer({ size: 65536, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }).mapAsync(GPUMapMode.READ).catch(() => {})
+      if (i % 64 === 63) { globalThis.gc(); await new Promise(resolve => setImmediate(resolve)) }
+    }
+    for (let i = 0; i < 6; ++i) { globalThis.gc(); await sleep(20) }
+    await draw(dev)
+    dev.destroy()
+  },
+  // destroy() while a map is pending rejects the map with an AbortError, and
+  // Dawn's own answer for that map, arriving later, is ignored.
+  async mapDestroyed() {
+    const dev = await device(create(flags()))
+    let aborted = 0
+    for (let i = 0; i < 4000; ++i) {
+      const buffer = dev.createBuffer({ size: 65536, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST })
+      buffer.mapAsync(GPUMapMode.READ).catch(e => { if (e.name === 'AbortError') aborted++ })
+      buffer.destroy()
+      if (i % 64 === 63) { globalThis.gc(); await new Promise(resolve => setImmediate(resolve)) }
+    }
+    for (let i = 0; i < 6; ++i) { globalThis.gc(); await sleep(20) }
+    if (aborted !== 4000) throw new Error(`${aborted} of 4000 maps were rejected with an AbortError`)
+    await draw(dev)
+    dev.destroy()
   },
   // A device lost the way a driver reset loses it, with nothing else pending:
   // only timers run, so nothing the app does drives a poll.

@@ -68,6 +68,56 @@ insert('src/dawn/node/binding/GPU.cpp', '    async_ = AsyncRunner::Create(instan
 insert('src/dawn/node/binding/AsyncRunner.h', '    inline ~AsyncContext() { runner_->End(); }', '    inline ~AsyncContext() {\n        if (!detached_) {\n            runner_->End();\n        }\n    }\n\n    // native-dawn: stop counting this context as pending work. For promises\n    // that may never settle (device.lost), so they do not keep the event\n    // loop polling for the life of the object.\n    inline void Detach() {\n        if (!detached_) {\n            detached_ = true;\n            runner_->End();\n        }\n    }')
 insert('src/dawn/node/binding/AsyncRunner.h', '    std::shared_ptr<AsyncRunner> runner_;\n};', '    std::shared_ptr<AsyncRunner> runner_;\n    bool detached_ = false;\n};')
 insert('src/dawn/node/binding/GPUAdapter.cpp', '    auto device_lost_ctx = new DeviceLostContext(env, PROMISE_INFO, async_);', '    auto device_lost_ctx = new DeviceLostContext(env, PROMISE_INFO, async_);\n    device_lost_ctx->Detach();')
+// A buffer's mapAsync callback outlives the buffer. Upstream it captures the
+// GPUBuffer's `this` and, through it, async_, mapped_ and pending_map_; Dawn
+// runs it at a later ProcessEvents, by which time the JavaScript wrapper may
+// have been collected and the GPUBuffer freed, so the callback writes freed
+// memory (corrupting the heap: glibc aborts, or V8 trips over its own data
+// later). It also decides whether destroy() or unmap() already settled the
+// promise by reading the promise's state, which is freed once the settled
+// promise is collected. Here the callback holds the runner itself, a flag
+// that destroy() and unmap() set when they settle the promise, and a token
+// that expires with the GPUBuffer; it touches the GPUBuffer only while that
+// token is alive.
+insert('src/dawn/node/binding/GPUBuffer.h', '    std::optional<interop::Promise<void>> pending_map_;', '    std::optional<interop::Promise<void>> pending_map_;\n    // native-dawn: true once destroy() or unmap() settled pending_map_; shared\n    // with the map callback, which must then leave the promise alone.\n    std::shared_ptr<bool> pending_map_settled_;\n    // native-dawn: expires with this object, so a map callback that runs after\n    // the wrapper was collected does not touch it.\n    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);')
+insert('src/dawn/node/binding/GPUBuffer.cpp', '    pending_map_.emplace(ctx->promise);', '    pending_map_.emplace(ctx->promise);\n    auto settled = std::make_shared<bool>(false);\n    pending_map_settled_ = settled;')
+insert('src/dawn/node/binding/GPUBuffer.cpp', `        [ctx = std::move(ctx), this](wgpu::MapAsyncStatus status, wgpu::StringView) {
+            // The promise may already have been resolved with an AbortError if there was an early
+            // destroy() or early unmap().
+            if (ctx->promise.GetState() != interop::PromiseState::Pending) {
+                assert(ctx->promise.GetState() == interop::PromiseState::Rejected);
+                return;
+            }`, `        [ctx = std::move(ctx), this, async = async_, settled,
+         alive = std::weak_ptr<bool>(alive_)](wgpu::MapAsyncStatus status, wgpu::StringView) {
+            // The promise may already have been rejected with an AbortError if there was an early
+            // destroy() or early unmap(). native-dawn: told by the shared flag; the promise's own
+            // state may be freed by now.
+            if (*settled) {
+                return;
+            }`)
+insert('src/dawn/node/binding/GPUBuffer.cpp', `                    ctx->promise.Resolve();
+                    mapped_ = true;`, `                    ctx->promise.Resolve();
+                    if (!alive.expired()) {
+                        mapped_ = true;
+                    }`)
+insert('src/dawn/node/binding/GPUBuffer.cpp', '                    async_->Reject(ctx->env, ctx->promise, Errors::AbortError(ctx->env));', '                    async->Reject(ctx->env, ctx->promise, Errors::AbortError(ctx->env));')
+insert('src/dawn/node/binding/GPUBuffer.cpp', '                    async_->Reject(ctx->env, ctx->promise, Errors::OperationError(ctx->env));', '                    async->Reject(ctx->env, ctx->promise, Errors::OperationError(ctx->env));')
+insert('src/dawn/node/binding/GPUBuffer.cpp', `            assert(*pending_map_ == ctx->promise);
+            pending_map_.reset();`, `            if (alive.expired()) {
+                return;
+            }
+            assert(*pending_map_ == ctx->promise);
+            pending_map_.reset();
+            pending_map_settled_.reset();`)
+insert('src/dawn/node/binding/GPUBuffer.cpp', `    if (pending_map_) {
+        pending_map_->Reject(Errors::AbortError(env));
+        pending_map_.reset();
+    }`, `    if (pending_map_) {
+        *pending_map_settled_ = true;
+        pending_map_settled_.reset();
+        pending_map_->Reject(Errors::AbortError(env));
+        pending_map_.reset();
+    }`)
 // With no standing poll, destroy() asks for one so the device-lost callback
 // queued by Dawn is delivered.
 insert('src/dawn/node/binding/GPUDevice.cpp', '"device was destroyed"));\n    }\n    device_.Destroy();\n    destroyed_ = true;', '"device was destroyed"));\n    }\n    device_.Destroy();\n    destroyed_ = true;\n    // native-dawn: deliver the queued device-lost callback.\n    async_->Begin(env);\n    async_->End();')
