@@ -33,7 +33,7 @@ struct Call { Table* table; int index; };
 struct Table {
     std::unordered_map<uint32_t, void*> handles;
     napi_ref memory = nullptr;  // a Uint8Array over the wasm memory (memory(view))
-    std::vector<napi_ref> fallback;
+    std::vector<napi_ref> fallback;  // weak: each import function holds its own (see WasmImports)
     std::vector<Call> calls;
     double nativeCalls = 0, fallbackCalls = 0;
     int holders = 0;  // the object wasmImports returned, and each import function
@@ -236,8 +236,9 @@ napi_value CallImport(napi_env env, napi_callback_info info) {
     a.t = call->table;
     if (kNatives[call->index].body(a)) { a.t->nativeCalls++; return nullptr; }
     a.t->fallbackCalls++;
-    napi_value fn, global, result = nullptr;
+    napi_value fn = nullptr, global, result = nullptr;
     napi_get_reference_value(env, a.t->fallback[call->index], &fn);
+    if (!fn) return nullptr;
     napi_get_global(env, &global);
     napi_call_function(env, global, fn, a.argc, a.argv, &result);
     return result;
@@ -245,7 +246,7 @@ napi_value CallImport(napi_env env, napi_callback_info info) {
 
 Table* TableOf(const Napi::CallbackInfo& info) { return static_cast<Table*>(info.Data()); }
 
-// wasmImports(glue): { imports, register(pointer, object), forget(pointer), memory(view), stats() }
+// wasmImports(glue): { imports, register(pointer, object), forget(pointer), memory(view), dispose(), stats() }
 Napi::Value WasmImports(const Napi::CallbackInfo& info) {
     const auto env = info.Env();
     if (!info[0].IsObject()) {
@@ -260,12 +261,18 @@ Napi::Value WasmImports(const Napi::CallbackInfo& info) {
 
     auto result = Napi::Object::New(env);
     auto imports = Napi::Object::New(env);
+    // Each glue function is kept alive by its import function (a property the
+    // GC can see), and the table only holds it weakly. A strong reference from
+    // here was a GC root: the glue usually reaches the program, which holds
+    // these imports, so their finalizers never ran and nothing was ever freed.
     for (int i = 0; i < kNativeCount; i++) {
         Napi::Value fn = glue.Get(kNatives[i].name);
         if (!fn.IsFunction()) continue;
-        napi_create_reference(env, fn, 1, &t->fallback[i]);
+        napi_create_reference(env, fn, 0, &t->fallback[i]);
         napi_value native;
         napi_create_function(env, kNatives[i].name, NAPI_AUTO_LENGTH, CallImport, &t->calls[i], &native);
+        napi_property_descriptor keep = { "fallback", nullptr, nullptr, nullptr, nullptr, fn, napi_default, nullptr };
+        napi_define_properties(env, native, 1, &keep);
         t->holders++;
         napi_add_finalizer(env, native, t, Release, nullptr, nullptr);
         imports.Set(kNatives[i].name, native);
@@ -295,6 +302,14 @@ Napi::Value WasmImports(const Napi::CallbackInfo& info) {
             napi_create_reference(env, info[0], 1, &t->memory);
         return env.Undefined();
     }, "memory", t));
+    // The program is done: drop its objects and its memory now rather than at
+    // collection. Later calls all take the glue's path.
+    result.Set("dispose", Napi::Function::New(env, [](const Napi::CallbackInfo& info) -> Napi::Value {
+        Table* t = TableOf(info);
+        t->handles.clear();
+        if (t->memory) { napi_delete_reference(info.Env(), t->memory); t->memory = nullptr; }
+        return info.Env().Undefined();
+    }, "dispose", t));
     result.Set("stats", Napi::Function::New(env, [](const Napi::CallbackInfo& info) -> Napi::Value {
         Table* t = TableOf(info);
         auto o = Napi::Object::New(info.Env());

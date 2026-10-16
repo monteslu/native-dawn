@@ -67,6 +67,8 @@ export interface WasmImports {
   forget(pointer: number): void
   /** The program's memory (hand it over again when the memory's buffer changes). */
   memory(view: Uint8Array): void
+  /** The program is done: drop the registered objects and the memory view now. */
+  dispose(): void
   /** Calls served directly, calls answered by the glue, registered pointers. */
   stats(): { native: number, fallback: number, handles: number }
 }

@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import v8 from 'node:v8'
+import vm from 'node:vm'
 import { create, globals, deviceHandle, objectHandle, addDeviceFeatures, wasmImports } from '../index.js'
 import { setup, flags, adapterOptions, compute, pixels, clear, GPUBufferUsage, GPUMapMode, GPUTextureUsage } from './helpers.mjs'
 
@@ -174,6 +176,32 @@ test('wasmImports draws through Dawn directly with webgpu.h arguments, and hands
     for (let i = 0; i < out.length; i += 4) assert.deepEqual([...out.subarray(i, i + 4)], [0, 255, 0, 255])
     texture.destroy(); vertices.destroy(); uniform.destroy()
   } finally { device.destroy() }
+})
+
+test('wasmImports lets a program whose glue reaches it be collected, and dispose() drops its objects and memory', async () => {
+  // The usual shape: the glue reaches the program, which holds the imports.
+  // A strong reference to the glue from native code made that a GC root.
+  v8.setFlagsFromString('--expose-gc')
+  const gc = vm.runInNewContext('gc')
+  let collected = 0
+  const registry = new FinalizationRegistry(() => { collected++ })
+  const make = (i) => {
+    const program = { native: null }
+    const glue = { wgpuQueueWriteBuffer: () => program, wgpuRenderPassEncoderDraw: () => program }
+    program.native = wasmImports(glue)
+    program.native.memory(new Uint8Array(16))
+    registry.register(program, i)
+  }
+  for (let i = 0; i < 4; i++) make(i)
+  await new Promise(r => setTimeout(r, 0))
+  for (let i = 0; i < 10 && collected < 4; i++) { gc(); await new Promise(r => setTimeout(r, 20)) }
+  assert.equal(collected, 4, 'every program was collected')
+
+  const fast = wasmImports({ wgpuQueueWriteBuffer: () => 'glue' })
+  fast.register(8, {})
+  fast.dispose()
+  assert.equal(fast.stats().handles, 0)
+  assert.equal(fast.imports.wgpuQueueWriteBuffer(1, 2, 0n, 0, 4), 'glue', 'after dispose() every call goes to the glue')
 })
 
 test('addDeviceFeatures adds the Dawn features the adapter has to the next requestDevice', async () => {
